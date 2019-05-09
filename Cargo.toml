@@ -1,0 +1,22 @@
+[package]
+name = "actix-web-prom"
+version = "0.1.0"
+authors = ["Norberto Lopes <nlopes.ml@gmail.com>"]
+edition = "2018"
+description = "Actix-web middleware to expose Prometheus metrics"
+documentation = "https://docs.rs/actix-web-prom"
+repository = "https://github.com/nlopes/actix-web-prom.git"
+keywords = ["actix", "actix-web", "middleware", "prometheus", "web"]
+categories = ["web-programming"]
+license = "MIT"
+readme = "README.md"
+exclude = [".gitignore", ".travis.yml"]
+
+[badges]
+travis-ci = { repository = "nlopes/actix-web-prom", branch = "master" }
+
+[dependencies]
+actix-service = "0.3"
+actix-web = "1.0.0-beta.3"
+futures = "0.1"
+prometheus = "0.6"
