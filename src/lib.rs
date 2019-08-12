@@ -30,7 +30,7 @@ fn health() -> HttpResponse {
 }
 
 fn main() -> std::io::Result<()> {
-    let prometheus = PrometheusMetrics::new("api", "/metrics");
+    let prometheus = PrometheusMetrics::new("api", Some("/metrics"));
     # if false {
         HttpServer::new(move || {
             App::new()
@@ -92,7 +92,7 @@ fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
 }
 
 fn main() -> std::io::Result<()> {
-    let prometheus = PrometheusMetrics::new("api", "/metrics");
+    let prometheus = PrometheusMetrics::new("api", Some("/metrics"));
 
     let counter_opts = opts!("counter", "some random counter").namespace("api");
     let counter = IntCounterVec::new(counter_opts, &["endpoint", "method", "status"]).unwrap();
@@ -113,6 +113,76 @@ fn main() -> std::io::Result<()> {
     # }
     Ok(())
 }
+```
+
+## Custom `Registry`
+
+Some apps might have more than one `actix_web::HttpServer`.
+If that's the case, you might want to use your own registry:
+
+```rust
+use actix_web::{web, App, HttpResponse, HttpServer};
+use actix_web_prom::PrometheusMetrics;
+use prometheus::Registry;
+use std::thread;
+
+fn public_handler() -> HttpResponse {
+    HttpResponse::Ok().body("Everyone can see it!")
+}
+
+fn private_handler() -> HttpResponse {
+    HttpResponse::Ok().body("This can be hidden behind a firewall")
+}
+
+fn main() -> std::io::Result<()> {
+    let shared_registry = Registry::new();
+
+    let private_metrics = PrometheusMetrics::new_with_registry(
+                                        shared_registry.clone(),
+                                        "private_api",
+                                        Some("/metrics")
+                                    )
+                                    // It is safe to unwrap when __no other app has the same namespace__
+                                    .unwrap();
+    let public_metrics = PrometheusMetrics::new_with_registry(
+                                        shared_registry.clone(),
+                                        "public_api",
+                                        // Metrics should not be available from the outside
+                                        None
+                                    )
+                                    .unwrap();
+
+# if false {
+    let private_thread = thread::spawn(move || {
+        HttpServer::new(move || {
+            App::new()
+                .wrap(private_metrics.clone())
+                .service(web::resource("/test").to(private_handler))
+        })
+        .bind("127.0.0.1:8081")
+        .unwrap()
+        .run()
+        .unwrap();
+    });
+
+    let public_thread = thread::spawn(|| {
+        HttpServer::new(move || {
+            App::new()
+                .wrap(public_metrics.clone())
+                .service(web::resource("/test").to(public_handler))
+        })
+        .bind("127.0.0.1:8082")
+        .unwrap()
+        .run()
+        .unwrap();
+    });
+
+    private_thread.join().unwrap();
+    public_thread.join().unwrap();
+# }
+    Ok(())
+}
+
 ```
 
 */
@@ -150,15 +220,26 @@ pub struct PrometheusMetrics {
     /// exposed registry for custom prometheus metrics
     pub registry: Registry,
     pub(crate) namespace: String,
-    pub(crate) endpoint: String,
+    pub(crate) endpoint: Option<String>,
 }
 
 impl PrometheusMetrics {
     /// Create a new PrometheusMetrics. You set the namespace and the metrics endpoint
     /// through here.
-    pub fn new(namespace: &str, endpoint: &str) -> Self {
+    pub fn new(namespace: &str, endpoint: Option<&str>) -> Self {
         let registry = Registry::new();
 
+        // this should not error because we are creating new registry
+        PrometheusMetrics::new_with_registry(registry, namespace, endpoint).unwrap()
+    }
+
+    /// Create a new PrometheusMetrics.
+    /// Throws error if "<`namespace`>_http_requests_total" already registered
+    pub fn new_with_registry(
+        registry: Registry,
+        namespace: &str,
+        endpoint: Option<&str>,
+    ) -> Result<Self, Box<std::error::Error>> {
         let http_requests_total_opts =
             opts!("http_requests_total", "Total number of HTTP requests").namespace(namespace);
         let http_requests_total =
@@ -178,17 +259,19 @@ impl PrometheusMetrics {
             &["endpoint", "method", "status"],
         )
         .unwrap();
-        registry
-            .register(Box::new(http_requests_duration_seconds.clone()))
-            .unwrap();
+        registry.register(Box::new(http_requests_duration_seconds.clone()))?;
 
-        PrometheusMetrics {
+        Ok(PrometheusMetrics {
             http_requests_total,
             http_requests_duration_seconds,
             registry,
             namespace: namespace.to_string(),
-            endpoint: endpoint.to_string(),
-        }
+            endpoint: if let Some(url) = endpoint {
+                Some(url.to_string())
+            } else {
+                None
+            },
+        })
     }
 
     fn metrics(&self) -> String {
@@ -200,7 +283,11 @@ impl PrometheusMetrics {
     }
 
     fn matches(&self, path: &str, method: &Method) -> bool {
-        self.endpoint == path && method == Method::GET
+        if self.endpoint.is_some() {
+            self.endpoint.as_ref().unwrap() == path && method == Method::GET
+        } else {
+            false
+        }
     }
 
     fn update_metrics(&self, path: &str, method: &Method, status: StatusCode, clock: SystemTime) {
@@ -364,9 +451,11 @@ mod tests {
     use actix_web::test::{call_service, init_service, read_body, read_response, TestRequest};
     use actix_web::{web, App, HttpResponse};
 
+    use prometheus::{Counter, Opts};
+
     #[test]
     fn middleware_basic() {
-        let prometheus = PrometheusMetrics::new("actix_web_prom", "/metrics");
+        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/metrics"));
 
         let mut app = init_service(
             App::new()
@@ -406,7 +495,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
 
     #[test]
     fn middleware_basic_failure() {
-        let prometheus = PrometheusMetrics::new("actix_web_prom", "/prometheus");
+        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/prometheus"));
 
         let mut app = init_service(
             App::new()
@@ -438,7 +527,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
         let counter_opts = opts!("counter", "some random counter").namespace("actix_web_prom");
         let counter = IntCounterVec::new(counter_opts, &["endpoint", "method", "status"]).unwrap();
 
-        let prometheus = PrometheusMetrics::new("actix_web_prom", "/metrics");
+        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/metrics"));
         prometheus
             .registry
             .register(Box::new(counter.clone()))
@@ -490,5 +579,79 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
             )
             .unwrap()
         ));
+    }
+
+    #[test]
+    fn middleware_none_endpoint() {
+        // Init PrometheusMetrics with none URL
+        let prometheus = PrometheusMetrics::new("actix_web_prom", None);
+
+        let mut app =
+            init_service(App::new().wrap(prometheus.clone()).service(
+                web::resource("/metrics").to(|| HttpResponse::Ok().body("not prometheus")),
+            ));
+
+        let response = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+
+        // Assert app works
+        assert_eq!(
+            String::from_utf8(response.to_vec()).unwrap(),
+            "not prometheus"
+        );
+
+        // Assert counter counts
+        let mut buffer = Vec::new();
+        let encoder = TextEncoder::new();
+        let metric_families = prometheus.registry.gather();
+        encoder.encode(&metric_families, &mut buffer).unwrap();
+        let output = String::from_utf8(buffer.clone()).unwrap();
+
+        assert!(output.contains(
+            "actix_web_prom_http_requests_total{endpoint=\"/metrics\",method=\"GET\",status=\"200\"} 1"
+        ));
+    }
+
+    #[test]
+    fn middleware_custom_registry_works() {
+        // Init Prometheus Registry
+        let registry = Registry::new();
+
+        let counter_opts = Opts::new("test_counter", "test counter help");
+        let counter = Counter::with_opts(counter_opts).unwrap();
+        registry.register(Box::new(counter.clone())).unwrap();
+
+        counter.inc_by(10_f64);
+
+        // Init PrometheusMetrics
+        let prometheus =
+            PrometheusMetrics::new_with_registry(registry, "actix_web_prom", Some("/metrics"))
+                .unwrap();
+
+        let mut app = init_service(
+            App::new()
+                .wrap(prometheus.clone())
+                .service(web::resource("/test").to(|| HttpResponse::Ok().finish())),
+        );
+
+        // all http counters are 0 because this is the first http request,
+        // so we should get only 10 on test counter
+        let response = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+
+        let ten_test_counter =
+            "# HELP test_counter test counter help\n# TYPE test_counter counter\ntest_counter 10\n";
+        assert_eq!(
+            String::from_utf8(response.to_vec()).unwrap(),
+            ten_test_counter
+        );
+
+        // all http counters are 1 because this is the second http request,
+        // plus 10 on test counter
+        let response = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+        let response_string = String::from_utf8(response.to_vec()).unwrap();
+
+        let one_http_counters = "# HELP actix_web_prom_http_requests_total Total number of HTTP requests\n# TYPE actix_web_prom_http_requests_total counter\nactix_web_prom_http_requests_total{endpoint=\"/metrics\",method=\"GET\",status=\"200\"} 1";
+
+        assert!(response_string.contains(ten_test_counter));
+        assert!(response_string.contains(one_http_counters));
     }
 }
