@@ -203,6 +203,9 @@ use futures::future::{ok, FutureResult};
 use futures::{Async, Future, Poll};
 use prometheus::{opts, Encoder, HistogramVec, IntCounterVec, Registry, TextEncoder};
 
+#[cfg(feature = "regex-replace")]
+use regex::Regex;
+
 #[derive(Clone)]
 #[must_use = "must be set up as middleware for actix-web"]
 /// By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
@@ -221,11 +224,15 @@ pub struct PrometheusMetrics {
     pub registry: Registry,
     pub(crate) namespace: String,
     pub(crate) endpoint: Option<String>,
+
+    #[cfg(feature = "regex-replace")]
+    pub(crate) replacements: Vec<(Regex, String)>,
 }
 
 impl PrometheusMetrics {
     /// Create a new PrometheusMetrics. You set the namespace and the metrics endpoint
     /// through here.
+    #[cfg(not(feature = "regex-replace"))]
     pub fn new(namespace: &str, endpoint: Option<&str>) -> Self {
         let registry = Registry::new();
 
@@ -234,33 +241,41 @@ impl PrometheusMetrics {
     }
 
     /// Create a new PrometheusMetrics.
-    /// Throws error if "<`namespace`>_http_requests_total" already registered
+    /// Returns an error if "<`namespace`>_http_requests_total" already registered.
+    /// Request paths are adjusted by executing the supplied replacements before storing the metrics.
+    #[cfg(feature = "regex-replace")]
+    pub fn new_with_registry(
+        registry: Registry,
+        namespace: &str,
+        endpoint: Option<&str>,
+        replacements: Vec<(Regex, String)>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let (http_requests_total, http_requests_duration_seconds) =
+            Self::register_metrics(&registry, namespace)?;
+        Ok(PrometheusMetrics {
+            http_requests_total,
+            http_requests_duration_seconds,
+            registry,
+            namespace: namespace.to_string(),
+            endpoint: if let Some(url) = endpoint {
+                Some(url.to_string())
+            } else {
+                None
+            },
+            replacements,
+        })
+    }
+
+    /// Create a new PrometheusMetrics.
+    /// Returns an error if "<`namespace`>_http_requests_total" already registered
+    #[cfg(not(feature = "regex-replace"))]
     pub fn new_with_registry(
         registry: Registry,
         namespace: &str,
         endpoint: Option<&str>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let http_requests_total_opts =
-            opts!("http_requests_total", "Total number of HTTP requests").namespace(namespace);
-        let http_requests_total =
-            IntCounterVec::new(http_requests_total_opts, &["endpoint", "method", "status"])
-                .unwrap();
-        registry
-            .register(Box::new(http_requests_total.clone()))
-            .unwrap();
-
-        let http_requests_duration_seconds_opts = opts!(
-            "http_requests_duration_seconds",
-            "HTTP request duration in seconds for all requests"
-        )
-        .namespace(namespace);
-        let http_requests_duration_seconds = HistogramVec::new(
-            http_requests_duration_seconds_opts.into(),
-            &["endpoint", "method", "status"],
-        )
-        .unwrap();
-        registry.register(Box::new(http_requests_duration_seconds.clone()))?;
-
+        let (http_requests_total, http_requests_duration_seconds) =
+            Self::register_metrics(&registry, namespace)?;
         Ok(PrometheusMetrics {
             http_requests_total,
             http_requests_duration_seconds,
@@ -272,6 +287,34 @@ impl PrometheusMetrics {
                 None
             },
         })
+    }
+
+    fn register_metrics(
+        registry: &Registry,
+        namespace: &str,
+    ) -> prometheus::Result<(IntCounterVec, HistogramVec)> {
+        let http_requests_total_opts =
+            opts!("http_requests_total", "Total number of HTTP requests").namespace(namespace);
+        let http_requests_total =
+            IntCounterVec::new(http_requests_total_opts, &["endpoint", "method", "status"])
+                .unwrap();
+
+        registry.register(Box::new(http_requests_total.clone()))?;
+
+        let http_requests_duration_seconds_opts = opts!(
+            "http_requests_duration_seconds",
+            "HTTP request duration in seconds for all requests"
+        )
+        .namespace(namespace);
+        let http_requests_duration_seconds = HistogramVec::new(
+            http_requests_duration_seconds_opts.into(),
+            &["endpoint", "method", "status"],
+        )
+        .unwrap();
+
+        registry.register(Box::new(http_requests_duration_seconds.clone()))?;
+
+        Ok((http_requests_total, http_requests_duration_seconds))
     }
 
     fn metrics(&self) -> String {
@@ -290,7 +333,29 @@ impl PrometheusMetrics {
         }
     }
 
+    #[cfg(feature = "regex-replace")]
     fn update_metrics(&self, path: &str, method: &Method, status: StatusCode, clock: SystemTime) {
+        log::trace!("About to replacing path capture groups: {}", path);
+        let mut path = String::from(path);
+        for (exp, repl) in self.replacements.clone() {
+            path = String::from(exp.replace_all(&path, &repl as &str))
+        }
+        log::trace!("Replaced path capture groups: {}", path);
+        self.update_metrics_inner(&path, method, status, clock)
+    }
+
+    #[cfg(not(feature = "regex-replace"))]
+    fn update_metrics(&self, path: &str, method: &Method, status: StatusCode, clock: SystemTime) {
+        self.update_metrics_inner(path, method, status, clock)
+    }
+
+    fn update_metrics_inner(
+        &self,
+        path: &str,
+        method: &Method,
+        status: StatusCode,
+        clock: SystemTime,
+    ) {
         let method = method.to_string();
         let status = status.as_u16().to_string();
 
@@ -304,6 +369,7 @@ impl PrometheusMetrics {
         self.http_requests_total
             .with_label_values(&[&path, &method, &status])
             .inc();
+        log::trace!("updated metrics");
     }
 }
 

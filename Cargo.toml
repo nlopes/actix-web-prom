@@ -15,8 +15,14 @@ exclude = [".gitignore", ".travis.yml"]
 [badges]
 travis-ci = { repository = "nlopes/actix-web-prom", branch = "master" }
 
+[features]
+default = []
+regex-replace = ["regex"]
+
 [dependencies]
 actix-service = "0.4"
 actix-web = "1.0.0"
 futures = "0.1"
 prometheus = "0.7"
+regex = { version = "1.3.1", optional = true }
+log = "0.4.8"
