@@ -239,7 +239,7 @@ impl PrometheusMetrics {
         registry: Registry,
         namespace: &str,
         endpoint: Option<&str>,
-    ) -> Result<Self, Box<std::error::Error>> {
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let http_requests_total_opts =
             opts!("http_requests_total", "Total number of HTTP requests").namespace(namespace);
         let http_requests_total =
