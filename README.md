@@ -21,7 +21,7 @@ By default two metrics are tracked (this assumes the namespace `actix_web_prom`)
 
 ## Usage
 
-First add `actix_web_prom` to your `Cargo.toml`:
+First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -31,6 +31,8 @@ actix-web-prom = "0.1"
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
 
 ```rust
+use std::collections::HashMap;
+
 use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::PrometheusMetrics;
 
@@ -39,7 +41,9 @@ fn health() -> HttpResponse {
 }
 
 fn main() -> std::io::Result<()> {
-    let prometheus = PrometheusMetrics::new("api", "/metrics");
+    let mut labels = HashMap::new();
+    labels.insert("label1".to_string(), "value1".to_string());
+    let prometheus = PrometheusMetrics::new("api", Some("/metrics"), Some(labels));
     HttpServer::new(move || {
         App::new()
             .wrap(prometheus.clone())
@@ -54,6 +58,9 @@ fn main() -> std::io::Result<()> {
 Using the above as an example, a few things are worth mentioning:
  - `api` is the metrics namespace
  - `/metrics` will be auto exposed (GET requests only)
+ - `Some(labels)` is used to add fixed labels to the metrics; `None` can be passed instead
+  if no additional labels are necessary.
+
 
 A call to the /metrics endpoint will expose your metrics:
 
@@ -61,23 +68,23 @@ A call to the /metrics endpoint will expose your metrics:
 $ curl http://localhost:8080/metrics
 # HELP api_http_requests_duration_seconds HTTP request duration in seconds for all requests
 # TYPE api_http_requests_duration_seconds histogram
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.005"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.01"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.025"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.05"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.1"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.25"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.5"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="1"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="2.5"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="5"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="10"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="+Inf"} 1
-api_http_requests_duration_seconds_sum{endpoint="/metrics",method="GET",status="200"} 0.00003
-api_http_requests_duration_seconds_count{endpoint="/metrics",method="GET",status="200"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.005"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.01"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.025"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.05"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.1"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.25"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.5"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="1"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="2.5"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="5"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="10"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="+Inf"} 1
+api_http_requests_duration_seconds_sum{endpoint="/metrics",label1="value1",method="GET",status="200"} 0.00003
+api_http_requests_duration_seconds_count{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
 # HELP api_http_requests_total Total number of HTTP requests
 # TYPE api_http_requests_total counter
-api_http_requests_total{endpoint="/metrics",method="GET",status="200"} 1
+api_http_requests_total{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
 ```
 
 ## Custom metrics
@@ -99,7 +106,7 @@ fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
 }
 
 fn main() -> std::io::Result<()> {
-    let prometheus = PrometheusMetrics::new("api", "/metrics");
+    let prometheus = PrometheusMetrics::new("api", Some("/metrics"));
 
     let counter_opts = opts!("counter", "some random counter").namespace("api");
     let counter = IntCounterVec::new(counter_opts, &["endpoint", "method", "status"]).unwrap();
