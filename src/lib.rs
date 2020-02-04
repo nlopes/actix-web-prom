@@ -22,6 +22,8 @@ actix_web_prom = "0.1"
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
 
 ```rust
+use std::collections::HashMap;
+
 use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::PrometheusMetrics;
 
@@ -30,7 +32,9 @@ fn health() -> HttpResponse {
 }
 
 fn main() -> std::io::Result<()> {
-    let prometheus = PrometheusMetrics::new("api", Some("/metrics"));
+    let mut labels = HashMap::new();
+    labels.insert("label1".to_string(), "value1".to_string());
+    let prometheus = PrometheusMetrics::new("api", Some("/metrics"), Some(labels));
     # if false {
         HttpServer::new(move || {
             App::new()
@@ -47,6 +51,9 @@ fn main() -> std::io::Result<()> {
 Using the above as an example, a few things are worth mentioning:
  - `api` is the metrics namespace
  - `/metrics` will be auto exposed (GET requests only)
+ - `Some(labels)` is used to add fixed labels to the metrics; `None` can be passed instead
+  if no additional labels are necessary.
+
 
 A call to the /metrics endpoint will expose your metrics:
 
@@ -54,29 +61,29 @@ A call to the /metrics endpoint will expose your metrics:
 $ curl http://localhost:8080/metrics
 # HELP api_http_requests_duration_seconds HTTP request duration in seconds for all requests
 # TYPE api_http_requests_duration_seconds histogram
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.005"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.01"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.025"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.05"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.1"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.25"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="0.5"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="1"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="2.5"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="5"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="10"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",method="GET",status="200",le="+Inf"} 1
-api_http_requests_duration_seconds_sum{endpoint="/metrics",method="GET",status="200"} 0.00003
-api_http_requests_duration_seconds_count{endpoint="/metrics",method="GET",status="200"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.005"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.01"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.025"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.05"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.1"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.25"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.5"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="1"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="2.5"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="5"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="10"} 1
+api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="+Inf"} 1
+api_http_requests_duration_seconds_sum{endpoint="/metrics",label1="value1",method="GET",status="200"} 0.00003
+api_http_requests_duration_seconds_count{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
 # HELP api_http_requests_total Total number of HTTP requests
 # TYPE api_http_requests_total counter
-api_http_requests_total{endpoint="/metrics",method="GET",status="200"} 1
+api_http_requests_total{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
 ```
 
 ## Custom metrics
 
 You instantiate `PrometheusMetrics` and then use its `.registry` to register your custom
-metric (in this case, we use a `IntCounterVec`.
+metric (in this case, we use a `IntCounterVec`).
 
 Then you can pass this counter through `.data()` to have it available within the resource
 responder.
@@ -92,7 +99,7 @@ fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
 }
 
 fn main() -> std::io::Result<()> {
-    let prometheus = PrometheusMetrics::new("api", Some("/metrics"));
+    let prometheus = PrometheusMetrics::new("api", Some("/metrics"), None);
 
     let counter_opts = opts!("counter", "some random counter").namespace("api");
     let counter = IntCounterVec::new(counter_opts, &["endpoint", "method", "status"]).unwrap();
@@ -140,7 +147,8 @@ fn main() -> std::io::Result<()> {
     let private_metrics = PrometheusMetrics::new_with_registry(
                                         shared_registry.clone(),
                                         "private_api",
-                                        Some("/metrics")
+                                        Some("/metrics"),
+                                        None,
                                     )
                                     // It is safe to unwrap when __no other app has the same namespace__
                                     .unwrap();
@@ -148,7 +156,8 @@ fn main() -> std::io::Result<()> {
                                         shared_registry.clone(),
                                         "public_api",
                                         // Metrics should not be available from the outside
-                                        None
+                                        None,
+                                        None,
                                     )
                                     .unwrap();
 
@@ -188,6 +197,7 @@ fn main() -> std::io::Result<()> {
 */
 #![deny(missing_docs)]
 
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -201,7 +211,7 @@ use actix_web::{
 };
 use futures::future::{ok, FutureResult};
 use futures::{Async, Future, Poll};
-use prometheus::{opts, Encoder, HistogramVec, IntCounterVec, Registry, TextEncoder};
+use prometheus::{Encoder, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder};
 
 #[derive(Clone)]
 #[must_use = "must be set up as middleware for actix-web"]
@@ -221,16 +231,21 @@ pub struct PrometheusMetrics {
     pub registry: Registry,
     pub(crate) namespace: String,
     pub(crate) endpoint: Option<String>,
+    pub(crate) const_labels: HashMap<String, String>,
 }
 
 impl PrometheusMetrics {
     /// Create a new PrometheusMetrics. You set the namespace and the metrics endpoint
     /// through here.
-    pub fn new(namespace: &str, endpoint: Option<&str>) -> Self {
+    pub fn new(
+        namespace: &str,
+        endpoint: Option<&str>,
+        const_labels: Option<HashMap<String, String>>,
+    ) -> Self {
         let registry = Registry::new();
 
         // this should not error because we are creating new registry
-        PrometheusMetrics::new_with_registry(registry, namespace, endpoint).unwrap()
+        PrometheusMetrics::new_with_registry(registry, namespace, endpoint, const_labels).unwrap()
     }
 
     /// Create a new PrometheusMetrics.
@@ -239,9 +254,13 @@ impl PrometheusMetrics {
         registry: Registry,
         namespace: &str,
         endpoint: Option<&str>,
+        const_labels: Option<HashMap<String, String>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let labels_hashmap = const_labels.map_or(HashMap::new(), |h| h);
         let http_requests_total_opts =
-            opts!("http_requests_total", "Total number of HTTP requests").namespace(namespace);
+            Opts::new("http_requests_total", "Total number of HTTP requests")
+                .namespace(namespace)
+                .const_labels(labels_hashmap.clone());
         let http_requests_total =
             IntCounterVec::new(http_requests_total_opts, &["endpoint", "method", "status"])
                 .unwrap();
@@ -249,11 +268,13 @@ impl PrometheusMetrics {
             .register(Box::new(http_requests_total.clone()))
             .unwrap();
 
-        let http_requests_duration_seconds_opts = opts!(
+        let http_requests_duration_seconds_opts = Opts::new(
             "http_requests_duration_seconds",
-            "HTTP request duration in seconds for all requests"
+            "HTTP request duration in seconds for all requests",
         )
-        .namespace(namespace);
+        .namespace(namespace)
+        .const_labels(labels_hashmap.clone());
+
         let http_requests_duration_seconds = HistogramVec::new(
             http_requests_duration_seconds_opts.into(),
             &["endpoint", "method", "status"],
@@ -266,11 +287,8 @@ impl PrometheusMetrics {
             http_requests_duration_seconds,
             registry,
             namespace: namespace.to_string(),
-            endpoint: if let Some(url) = endpoint {
-                Some(url.to_string())
-            } else {
-                None
-            },
+            endpoint: endpoint.map(|e| e.to_string()),
+            const_labels: labels_hashmap,
         })
     }
 
@@ -455,7 +473,7 @@ mod tests {
 
     #[test]
     fn middleware_basic() {
-        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/metrics"));
+        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/metrics"), None);
 
         let mut app = init_service(
             App::new()
@@ -495,7 +513,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
 
     #[test]
     fn middleware_basic_failure() {
-        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/prometheus"));
+        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/prometheus"), None);
 
         let mut app = init_service(
             App::new()
@@ -524,10 +542,10 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
 
     #[test]
     fn middleware_custom_counter() {
-        let counter_opts = opts!("counter", "some random counter").namespace("actix_web_prom");
+        let counter_opts = Opts::new("counter", "some random counter").namespace("actix_web_prom");
         let counter = IntCounterVec::new(counter_opts, &["endpoint", "method", "status"]).unwrap();
 
-        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/metrics"));
+        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/metrics"), None);
         prometheus
             .registry
             .register(Box::new(counter.clone()))
@@ -584,7 +602,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
     #[test]
     fn middleware_none_endpoint() {
         // Init PrometheusMetrics with none URL
-        let prometheus = PrometheusMetrics::new("actix_web_prom", None);
+        let prometheus = PrometheusMetrics::new("actix_web_prom", None, None);
 
         let mut app =
             init_service(App::new().wrap(prometheus.clone()).service(
@@ -623,9 +641,13 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         counter.inc_by(10_f64);
 
         // Init PrometheusMetrics
-        let prometheus =
-            PrometheusMetrics::new_with_registry(registry, "actix_web_prom", Some("/metrics"))
-                .unwrap();
+        let prometheus = PrometheusMetrics::new_with_registry(
+            registry,
+            "actix_web_prom",
+            Some("/metrics"),
+            None,
+        )
+        .unwrap();
 
         let mut app = init_service(
             App::new()
@@ -653,5 +675,49 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
 
         assert!(response_string.contains(ten_test_counter));
         assert!(response_string.contains(one_http_counters));
+    }
+
+    #[test]
+    fn middleware_const_labels() {
+        let mut labels = HashMap::new();
+        labels.insert("label1".to_string(), "value1".to_string());
+        labels.insert("label2".to_string(), "value2".to_string());
+        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/metrics"), Some(labels));
+
+        let mut app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/health_check").to(|| HttpResponse::Ok())),
+        );
+
+        let res = call_service(
+            &mut app,
+            TestRequest::with_uri("/health_check").to_request(),
+        );
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res), "");
+
+        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+        let body = String::from_utf8(res.to_vec()).unwrap();
+        println!("{}", body);
+        assert!(&body.contains(
+            &String::from_utf8(web::Bytes::from(
+                "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests
+# TYPE actix_web_prom_http_requests_duration_seconds histogram
+actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/health_check\",label1=\"value1\",label2=\"value2\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
+"
+        ).to_vec()).unwrap()));
+        assert!(body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
+# TYPE actix_web_prom_http_requests_total counter
+actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",label2=\"value2\",method=\"GET\",status=\"200\"} 1
+"
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
     }
 }
