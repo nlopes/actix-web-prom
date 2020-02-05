@@ -17,6 +17,6 @@ travis-ci = { repository = "nlopes/actix-web-prom", branch = "master" }
 
 [dependencies]
 actix-service = "0.4"
-actix-web = "1.0.0"
+actix-web = "2.0.0"
 futures = "0.1"
 prometheus = "0.7"
