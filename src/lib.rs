@@ -200,7 +200,7 @@ fn main() -> std::io::Result<()> {
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::Instant;
 
 use actix_service::{Service, Transform};
 use actix_web::{
@@ -308,17 +308,16 @@ impl PrometheusMetrics {
         }
     }
 
-    fn update_metrics(&self, path: &str, method: &Method, status: StatusCode, clock: SystemTime) {
+    fn update_metrics(&self, path: &str, method: &Method, status: StatusCode, clock: Instant) {
         let method = method.to_string();
         let status = status.as_u16().to_string();
 
-        if let Ok(elapsed) = clock.elapsed() {
-            let duration =
-                (elapsed.as_secs() as f64) + f64::from(elapsed.subsec_nanos()) / 1_000_000_000_f64;
-            self.http_requests_duration_seconds
-                .with_label_values(&[&path, &method, &status])
-                .observe(duration);
-        }
+        let elapsed = clock.elapsed();
+        let duration =
+            (elapsed.as_secs() as f64) + f64::from(elapsed.subsec_nanos()) / 1_000_000_000_f64;
+        self.http_requests_duration_seconds
+            .with_label_values(&[&path, &method, &status])
+            .observe(duration);
         self.http_requests_total
             .with_label_values(&[&path, &method, &status])
             .inc();
@@ -367,11 +366,11 @@ where
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         self.service.poll_ready()
     }
-
     fn call(&mut self, req: ServiceRequest) -> Self::Future {
+        let clock = Instant::now();
         MetricsResponse {
             fut: self.service.call(req),
-            clock: SystemTime::now(),
+            clock: clock,
             inner: self.inner.clone(),
             _t: PhantomData,
         }
@@ -385,7 +384,7 @@ where
     S: Service,
 {
     fut: S::Future,
-    clock: SystemTime,
+    clock: Instant,
     inner: Arc<PrometheusMetrics>,
     _t: PhantomData<(B,)>,
 }
@@ -432,7 +431,7 @@ where
 pub struct StreamLog<B> {
     body: ResponseBody<B>,
     size: usize,
-    clock: SystemTime,
+    clock: Instant,
     inner: Arc<PrometheusMetrics>,
     status: StatusCode,
     path: String,
