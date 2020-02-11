@@ -25,7 +25,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.1"
+actix-web-prom = "0.2"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -40,7 +40,8 @@ fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
-fn main() -> std::io::Result<()> {
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
     let mut labels = HashMap::new();
     labels.insert("label1".to_string(), "value1".to_string());
     let prometheus = PrometheusMetrics::new("api", Some("/metrics"), Some(labels));
@@ -50,8 +51,8 @@ fn main() -> std::io::Result<()> {
             .service(web::resource("/health").to(health))
     })
     .bind("127.0.0.1:8080")?
-    .run();
-    Ok(())
+    .run()
+    .await
 }
 ```
 
@@ -98,15 +99,16 @@ responder.
 ```rust
 use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::PrometheusMetrics;
-use prometheus::IntCounterVec;
+use prometheus::{opts, IntCounterVec};
 
 fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
     counter.with_label_values(&["endpoint", "method", "status"]).inc();
     HttpResponse::Ok().finish()
 }
 
-fn main() -> std::io::Result<()> {
-    let prometheus = PrometheusMetrics::new("api", Some("/metrics"));
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
+    let prometheus = PrometheusMetrics::new("api", Some("/metrics"), None);
 
     let counter_opts = opts!("counter", "some random counter").namespace("api");
     let counter = IntCounterVec::new(counter_opts, &["endpoint", "method", "status"]).unwrap();
@@ -122,7 +124,7 @@ fn main() -> std::io::Result<()> {
             .service(web::resource("/health").to(health))
     })
     .bind("127.0.0.1:8080")?
-    .run();
-    Ok(())
+    .run()
+    .await
 }
 ```
