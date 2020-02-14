@@ -16,7 +16,7 @@ First add `actix_web_prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix_web_prom = "0.1"
+actix_web_prom = "0.2"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -31,7 +31,8 @@ fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
-fn main() -> std::io::Result<()> {
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
     let mut labels = HashMap::new();
     labels.insert("label1".to_string(), "value1".to_string());
     let prometheus = PrometheusMetrics::new("api", Some("/metrics"), Some(labels));
@@ -42,7 +43,8 @@ fn main() -> std::io::Result<()> {
                 .service(web::resource("/health").to(health))
         })
         .bind("127.0.0.1:8080")?
-        .run();
+        .run()
+        .await?;
     # }
     Ok(())
 }
@@ -98,7 +100,8 @@ fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
-fn main() -> std::io::Result<()> {
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
     let prometheus = PrometheusMetrics::new("api", Some("/metrics"), None);
 
     let counter_opts = opts!("counter", "some random counter").namespace("api");
@@ -116,7 +119,8 @@ fn main() -> std::io::Result<()> {
                 .service(web::resource("/health").to(health))
         })
         .bind("127.0.0.1:8080")?
-        .run();
+        .run()
+        .await?;
     # }
     Ok(())
 }
@@ -130,6 +134,7 @@ If that's the case, you might want to use your own registry:
 ```rust
 use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::PrometheusMetrics;
+use actix_rt::System;
 use prometheus::Registry;
 use std::thread;
 
@@ -163,27 +168,29 @@ fn main() -> std::io::Result<()> {
 
 # if false {
     let private_thread = thread::spawn(move || {
-        HttpServer::new(move || {
+        let mut sys = System::new("private");
+        let srv = HttpServer::new(move || {
             App::new()
                 .wrap(private_metrics.clone())
                 .service(web::resource("/test").to(private_handler))
         })
         .bind("127.0.0.1:8081")
         .unwrap()
-        .run()
-        .unwrap();
+        .run();
+        sys.block_on(srv).unwrap();
     });
 
     let public_thread = thread::spawn(|| {
-        HttpServer::new(move || {
+        let mut sys = System::new("public");
+        let srv = HttpServer::new(move || {
             App::new()
                 .wrap(public_metrics.clone())
                 .service(web::resource("/test").to(public_handler))
         })
         .bind("127.0.0.1:8082")
         .unwrap()
-        .run()
-        .unwrap();
+        .run();
+        sys.block_on(srv).unwrap();
     });
 
     private_thread.join().unwrap();
@@ -198,7 +205,7 @@ fn main() -> std::io::Result<()> {
 #![deny(missing_docs)]
 
 use std::collections::HashMap;
-use std::marker::PhantomData;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -209,8 +216,11 @@ use actix_web::{
     web::Bytes,
     Error,
 };
-use futures::future::{ok, FutureResult};
-use futures::{Async, Future, Poll};
+use futures::{
+    future::{ok, Ready},
+    task::{Context, Poll},
+    Future,
+};
 use prometheus::{Encoder, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder};
 
 #[derive(Clone)]
@@ -336,7 +346,7 @@ where
     type Error = Error;
     type InitError = ();
     type Transform = PrometheusMetricsMiddleware<S>;
-    type Future = FutureResult<Self::Transform, Self::InitError>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
         ok(PrometheusMetricsMiddleware {
@@ -362,69 +372,42 @@ where
     type Request = ServiceRequest;
     type Response = ServiceResponse<StreamLog<B>>;
     type Error = S::Error;
-    type Future = MetricsResponse<S, B>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        self.service.poll_ready()
+    fn poll_ready(&mut self, ct: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(ct)
     }
 
     fn call(&mut self, req: ServiceRequest) -> Self::Future {
-        MetricsResponse {
-            fut: self.service.call(req),
-            clock: SystemTime::now(),
-            inner: self.inner.clone(),
-            _t: PhantomData,
-        }
-    }
-}
-
-#[doc(hidden)]
-pub struct MetricsResponse<S, B>
-where
-    B: MessageBody,
-    S: Service,
-{
-    fut: S::Future,
-    clock: SystemTime,
-    inner: Arc<PrometheusMetrics>,
-    _t: PhantomData<(B,)>,
-}
-
-impl<S, B> Future for MetricsResponse<S, B>
-where
-    B: MessageBody,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-{
-    type Item = ServiceResponse<StreamLog<B>>;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let res = futures::try_ready!(self.fut.poll());
-
-        let req = res.request();
         let inner = self.inner.clone();
-        let method = req.method().clone();
-        let path = req.path().to_string();
+        let clock = SystemTime::now();
+        let fut = self.service.call(req);
+        Box::pin(async move {
+            let res = fut.await?;
+            let req = res.request();
+            let method = req.method().clone();
+            let path = req.path().to_string();
 
-        Ok(Async::Ready(res.map_body(move |mut head, mut body| {
-            // We short circuit the response status and body to serve the endpoint
-            // automagically. This way the user does not need to set the middleware *AND*
-            // an endpoint to serve middleware results. The user is only required to set
-            // the middleware and tell us what the endpoint should be.
-            if inner.matches(&path, &method) {
-                head.status = StatusCode::OK;
-                body = ResponseBody::Other(Body::from_message(inner.metrics()));
-            }
-            ResponseBody::Body(StreamLog {
-                body,
-                size: 0,
-                clock: self.clock,
-                inner,
-                status: head.status,
-                path,
-                method,
-            })
-        })))
+            Ok(res.map_body(move |mut head, mut body| {
+                // We short circuit the response status and body to serve the endpoint
+                // automagically. This way the user does not need to set the middleware *AND*
+                // an endpoint to serve middleware results. The user is only required to set
+                // the middleware and tell us what the endpoint should be.
+                if inner.matches(&path, &method) {
+                    head.status = StatusCode::OK;
+                    body = ResponseBody::Other(Body::from_message(inner.metrics()));
+                }
+                ResponseBody::Body(StreamLog {
+                    body,
+                    size: 0,
+                    clock,
+                    inner,
+                    status: head.status,
+                    path,
+                    method,
+                })
+            }))
+        })
     }
 }
 
@@ -452,13 +435,13 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
         self.body.size()
     }
 
-    fn poll_next(&mut self) -> Poll<Option<Bytes>, Error> {
-        match self.body.poll_next()? {
-            Async::Ready(Some(chunk)) => {
+    fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Error>>> {
+        match self.body.poll_next(cx) {
+            Poll::Ready(Some(Ok(chunk))) => {
                 self.size += chunk.len();
-                Ok(Async::Ready(Some(chunk)))
+                Poll::Ready(Some(Ok(chunk)))
             }
-            val => Ok(val),
+            val => val,
         }
     }
 }
@@ -471,24 +454,26 @@ mod tests {
 
     use prometheus::{Counter, Opts};
 
-    #[test]
-    fn middleware_basic() {
+    #[actix_rt::test]
+    async fn middleware_basic() {
         let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/metrics"), None);
 
         let mut app = init_service(
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/health_check").to(|| HttpResponse::Ok())),
-        );
+        )
+        .await;
 
         let res = call_service(
             &mut app,
             TestRequest::with_uri("/health_check").to_request(),
-        );
+        )
+        .await;
         assert!(res.status().is_success());
-        assert_eq!(read_body(res), "");
+        assert_eq!(read_body(res).await, "");
 
-        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
@@ -511,21 +496,23 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         ));
     }
 
-    #[test]
-    fn middleware_basic_failure() {
+    #[actix_rt::test]
+    async fn middleware_basic_failure() {
         let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/prometheus"), None);
 
         let mut app = init_service(
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/health_check").to(|| HttpResponse::Ok())),
-        );
+        )
+        .await;
 
         call_service(
             &mut app,
             TestRequest::with_uri("/health_checkz").to_request(),
-        );
-        let res = read_response(&mut app, TestRequest::with_uri("/prometheus").to_request());
+        )
+        .await;
+        let res = read_response(&mut app, TestRequest::with_uri("/prometheus").to_request()).await;
         assert!(String::from_utf8(res.to_vec()).unwrap().contains(
             &String::from_utf8(
                 web::Bytes::from(
@@ -540,8 +527,8 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
         ));
     }
 
-    #[test]
-    fn middleware_custom_counter() {
+    #[actix_rt::test]
+    async fn middleware_custom_counter() {
         let counter_opts = Opts::new("counter", "some random counter").namespace("actix_web_prom");
         let counter = IntCounterVec::new(counter_opts, &["endpoint", "method", "status"]).unwrap();
 
@@ -555,14 +542,16 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/health_check").to(|| HttpResponse::Ok())),
-        );
+        )
+        .await;
 
         // Verify that 'counter' does not appear in the output before we use it
         call_service(
             &mut app,
             TestRequest::with_uri("/health_check").to_request(),
-        );
-        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+        )
+        .await;
+        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
         assert!(!String::from_utf8(res.to_vec()).unwrap().contains(
             &String::from_utf8(
                 web::Bytes::from(
@@ -583,8 +572,8 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         counter
             .with_label_values(&["endpoint", "method", "status"])
             .inc();
-        call_service(&mut app, TestRequest::with_uri("/metrics").to_request());
-        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+        call_service(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
         assert!(String::from_utf8(res.to_vec()).unwrap().contains(
             &String::from_utf8(
                 web::Bytes::from(
@@ -599,17 +588,19 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         ));
     }
 
-    #[test]
-    fn middleware_none_endpoint() {
+    #[actix_rt::test]
+    async fn middleware_none_endpoint() {
         // Init PrometheusMetrics with none URL
         let prometheus = PrometheusMetrics::new("actix_web_prom", None, None);
 
         let mut app =
             init_service(App::new().wrap(prometheus.clone()).service(
                 web::resource("/metrics").to(|| HttpResponse::Ok().body("not prometheus")),
-            ));
+            ))
+            .await;
 
-        let response = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+        let response =
+            read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
 
         // Assert app works
         assert_eq!(
@@ -629,8 +620,8 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         ));
     }
 
-    #[test]
-    fn middleware_custom_registry_works() {
+    #[actix_rt::test]
+    async fn middleware_custom_registry_works() {
         // Init Prometheus Registry
         let registry = Registry::new();
 
@@ -653,11 +644,13 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
             App::new()
                 .wrap(prometheus.clone())
                 .service(web::resource("/test").to(|| HttpResponse::Ok().finish())),
-        );
+        )
+        .await;
 
         // all http counters are 0 because this is the first http request,
         // so we should get only 10 on test counter
-        let response = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+        let response =
+            read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
 
         let ten_test_counter =
             "# HELP test_counter test counter help\n# TYPE test_counter counter\ntest_counter 10\n";
@@ -668,7 +661,8 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
 
         // all http counters are 1 because this is the second http request,
         // plus 10 on test counter
-        let response = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+        let response =
+            read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
         let response_string = String::from_utf8(response.to_vec()).unwrap();
 
         let one_http_counters = "# HELP actix_web_prom_http_requests_total Total number of HTTP requests\n# TYPE actix_web_prom_http_requests_total counter\nactix_web_prom_http_requests_total{endpoint=\"/metrics\",method=\"GET\",status=\"200\"} 1";
@@ -677,8 +671,8 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         assert!(response_string.contains(one_http_counters));
     }
 
-    #[test]
-    fn middleware_const_labels() {
+    #[actix_rt::test]
+    async fn middleware_const_labels() {
         let mut labels = HashMap::new();
         labels.insert("label1".to_string(), "value1".to_string());
         labels.insert("label2".to_string(), "value2".to_string());
@@ -688,16 +682,18 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/health_check").to(|| HttpResponse::Ok())),
-        );
+        )
+        .await;
 
         let res = call_service(
             &mut app,
             TestRequest::with_uri("/health_check").to_request(),
-        );
+        )
+        .await;
         assert!(res.status().is_success());
-        assert_eq!(read_body(res), "");
+        assert_eq!(read_body(res).await, "");
 
-        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request());
+        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
         println!("{}", body);
         assert!(&body.contains(
