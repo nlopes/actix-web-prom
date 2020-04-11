@@ -216,11 +216,7 @@ use actix_web::{
     web::Bytes,
     Error,
 };
-use futures::{
-    future::{ok, Ready},
-    task::{Context, Poll},
-    Future,
-};
+use futures::{future::{ok, Ready}, task::{Context, Poll}, Future, Stream};
 use prometheus::{Encoder, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder};
 
 #[derive(Clone)]
@@ -411,8 +407,12 @@ where
     }
 }
 
+use pin_project::{pin_project, pinned_drop};
+
 #[doc(hidden)]
+#[pin_project(PinnedDrop)]
 pub struct StreamLog<B> {
+    #[pin]
     body: ResponseBody<B>,
     size: usize,
     clock: SystemTime,
@@ -422,8 +422,9 @@ pub struct StreamLog<B> {
     method: Method,
 }
 
-impl<B> Drop for StreamLog<B> {
-    fn drop(&mut self) {
+#[pinned_drop]
+impl<B> PinnedDrop for StreamLog<B> {
+    fn drop(self: Pin<&mut Self>) {
         // update the metrics for this request at the very end of responding
         self.inner
             .update_metrics(&self.path, &self.method, self.status, self.clock);
@@ -435,10 +436,11 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
         self.body.size()
     }
 
-    fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Error>>> {
-        match self.body.poll_next(cx) {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Error>>> {
+        let this = self.project();
+        match MessageBody::poll_next(this.body, cx) {
             Poll::Ready(Some(Ok(chunk))) => {
-                self.size += chunk.len();
+                *this.size += chunk.len();
                 Poll::Ready(Some(Ok(chunk)))
             }
             val => val,
