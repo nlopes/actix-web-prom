@@ -339,7 +339,6 @@ impl<S, B> Transform<S> for PrometheusMetrics
 where
     B: MessageBody,
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-    S::Future: 'static,
 {
     type Request = ServiceRequest;
     type Response = ServiceResponse<StreamLog<B>>;
@@ -357,6 +356,63 @@ where
 }
 
 #[doc(hidden)]
+#[pin_project::pin_project]
+pub struct LoggerResponse<S, B>
+where
+    B: MessageBody,
+    S: Service,
+{
+    #[pin]
+    fut: S::Future,
+    time: SystemTime,
+    inner: Arc<PrometheusMetrics>,
+    _t: PhantomData<(B,)>,
+}
+
+impl<S, B> Future for LoggerResponse<S, B>
+where
+    B: MessageBody,
+    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+{
+    type Output = Result<ServiceResponse<StreamLog<B>>, Error>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+
+        let res = match futures::ready!(this.fut.poll(cx)) {
+            Ok(res) => res,
+            Err(e) => return Poll::Ready(Err(e)),
+        };
+
+        let time = *this.time;
+        let req = res.request();
+        let method = req.method().clone();
+        let path = req.path().to_string();
+        let inner = this.inner.clone();
+
+        Poll::Ready(Ok(res.map_body(move |mut head, mut body| {
+            // We short circuit the response status and body to serve the endpoint
+            // automagically. This way the user does not need to set the middleware *AND*
+            // an endpoint to serve middleware results. The user is only required to set
+            // the middleware and tell us what the endpoint should be.
+            if inner.matches(&path, &method) {
+                head.status = StatusCode::OK;
+                body = ResponseBody::Other(Body::from_message(inner.metrics()));
+            }
+            ResponseBody::Body(StreamLog {
+                body,
+                size: 0,
+                clock: time,
+                inner,
+                status: head.status,
+                path,
+                method,
+            })
+        })))
+    }
+}
+
+#[doc(hidden)]
 /// Middleware service for PrometheusMetrics
 pub struct PrometheusMetricsMiddleware<S> {
     service: S,
@@ -366,53 +422,34 @@ pub struct PrometheusMetricsMiddleware<S> {
 impl<S, B> Service for PrometheusMetricsMiddleware<S>
 where
     S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-    S::Future: 'static,
     B: MessageBody,
 {
     type Request = ServiceRequest;
     type Response = ServiceResponse<StreamLog<B>>;
     type Error = S::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+    type Future = LoggerResponse<S, B>;
 
     fn poll_ready(&mut self, ct: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(ct)
     }
 
     fn call(&mut self, req: ServiceRequest) -> Self::Future {
-        let inner = self.inner.clone();
-        let clock = SystemTime::now();
-        let fut = self.service.call(req);
-        Box::pin(async move {
-            let res = fut.await?;
-            let req = res.request();
-            let method = req.method().clone();
-            let path = req.path().to_string();
-
-            Ok(res.map_body(move |mut head, mut body| {
-                // We short circuit the response status and body to serve the endpoint
-                // automagically. This way the user does not need to set the middleware *AND*
-                // an endpoint to serve middleware results. The user is only required to set
-                // the middleware and tell us what the endpoint should be.
-                if inner.matches(&path, &method) {
-                    head.status = StatusCode::OK;
-                    body = ResponseBody::Other(Body::from_message(inner.metrics()));
-                }
-                ResponseBody::Body(StreamLog {
-                    body,
-                    size: 0,
-                    clock,
-                    inner,
-                    status: head.status,
-                    path,
-                    method,
-                })
-            }))
-        })
+        LoggerResponse {
+            fut: self.service.call(req),
+            time: SystemTime::now(),
+            inner: self.inner.clone(),
+            _t: PhantomData,
+        }
     }
 }
 
+use pin_project::{pin_project, pinned_drop};
+use std::marker::PhantomData;
+
 #[doc(hidden)]
+#[pin_project(PinnedDrop)]
 pub struct StreamLog<B> {
+    #[pin]
     body: ResponseBody<B>,
     size: usize,
     clock: SystemTime,
@@ -422,8 +459,9 @@ pub struct StreamLog<B> {
     method: Method,
 }
 
-impl<B> Drop for StreamLog<B> {
-    fn drop(&mut self) {
+#[pinned_drop]
+impl<B> PinnedDrop for StreamLog<B> {
+    fn drop(self: Pin<&mut Self>) {
         // update the metrics for this request at the very end of responding
         self.inner
             .update_metrics(&self.path, &self.method, self.status, self.clock);
@@ -435,10 +473,11 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
         self.body.size()
     }
 
-    fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Error>>> {
-        match self.body.poll_next(cx) {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Error>>> {
+        let this = self.project();
+        match MessageBody::poll_next(this.body, cx) {
             Poll::Ready(Some(Ok(chunk))) => {
-                self.size += chunk.len();
+                *this.size += chunk.len();
                 Poll::Ready(Some(Ok(chunk)))
             }
             val => val,
