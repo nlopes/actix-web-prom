@@ -216,7 +216,11 @@ use actix_web::{
     web::Bytes,
     Error,
 };
-use futures::{future::{ok, Ready}, task::{Context, Poll}, Future};
+use futures::{
+    future::{ok, Ready},
+    task::{Context, Poll},
+    Future,
+};
 use prometheus::{Encoder, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder};
 
 #[derive(Clone)]
@@ -354,9 +358,9 @@ where
 #[doc(hidden)]
 #[pin_project::pin_project]
 pub struct LoggerResponse<S, B>
-    where
-        B: MessageBody,
-        S: Service,
+where
+    B: MessageBody,
+    S: Service,
 {
     #[pin]
     fut: S::Future,
@@ -366,9 +370,9 @@ pub struct LoggerResponse<S, B>
 }
 
 impl<S, B> Future for LoggerResponse<S, B>
-    where
-        B: MessageBody,
-        S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+where
+    B: MessageBody,
+    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 {
     type Output = Result<ServiceResponse<StreamLog<B>>, Error>;
 
@@ -439,7 +443,7 @@ where
     }
 }
 
-use pin_project::{pin_project, pinned_drop, project};
+use pin_project::{pin_project, pinned_drop};
 use std::marker::PhantomData;
 
 #[doc(hidden)]
@@ -469,7 +473,6 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
         self.body.size()
     }
 
-    #[project]
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Error>>> {
         let this = self.project();
         match MessageBody::poll_next(this.body, cx) {
