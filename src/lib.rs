@@ -1,5 +1,5 @@
 /*!
-Prometheus instrumentation for actix-web.
+Prometheus instrumentation for [actix-web](https://github.com/actix/actix-web). This middleware is heavily influenced by the work in [sd2k/rocket_prometheus](https://github.com/sd2k/rocket_prometheus). We track the same default metrics and allow for adding user defined metrics.
 
 By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
 
@@ -16,7 +16,7 @@ First add `actix_web_prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix_web_prom = "0.2"
+actix_web_prom = "0.3"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:

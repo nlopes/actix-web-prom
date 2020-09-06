@@ -1,14 +1,11 @@
-# Prometheus middleware for actix-web
+# actix-web-prom
 
 [![Build Status](https://travis-ci.org/nlopes/actix-web-prom.svg?branch=master)](https://travis-ci.org/nlopes/actix-web-prom)
 [![docs.rs](https://docs.rs/actix-web-prom/badge.svg)](https://docs.rs/actix-web-prom)
 [![crates.io](https://img.shields.io/crates/v/actix-web-prom.svg)](https://crates.io/crates/actix-web-prom)
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/nlopes/actix-web-prom/blob/master/LICENSE)
 
-Prometheus instrumentation for [actix-web](https://github.com/actix/actix-web). This
-middleware is heavily influenced by the work in
-[sd2k/rocket_prometheus](https://github.com/sd2k/rocket_prometheus). We track the same
-default metrics and allow for adding user defined metrics.
+Prometheus instrumentation for [actix-web](https://github.com/actix/actix-web). This middleware is heavily influenced by the work in [sd2k/rocket_prometheus](https://github.com/sd2k/rocket_prometheus). We track the same default metrics and allow for adding user defined metrics.
 
 By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
 
@@ -21,11 +18,11 @@ By default two metrics are tracked (this assumes the namespace `actix_web_prom`)
 
 ## Usage
 
-First add `actix-web-prom` to your `Cargo.toml`:
+First add `actix_web_prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.2"
+actix_web_prom = "0.3"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -45,14 +42,17 @@ async fn main() -> std::io::Result<()> {
     let mut labels = HashMap::new();
     labels.insert("label1".to_string(), "value1".to_string());
     let prometheus = PrometheusMetrics::new("api", Some("/metrics"), Some(labels));
-    HttpServer::new(move || {
-        App::new()
-            .wrap(prometheus.clone())
-            .service(web::resource("/health").to(health))
-    })
-    .bind("127.0.0.1:8080")?
-    .run()
-    .await
+    # if false {
+        HttpServer::new(move || {
+            App::new()
+                .wrap(prometheus.clone())
+                .service(web::resource("/health").to(health))
+        })
+        .bind("127.0.0.1:8080")?
+        .run()
+        .await?;
+    # }
+    Ok(())
 }
 ```
 
@@ -88,10 +88,10 @@ api_http_requests_duration_seconds_count{endpoint="/metrics",label1="value1",met
 api_http_requests_total{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
 ```
 
-## Custom metrics
+### Custom metrics
 
 You instantiate `PrometheusMetrics` and then use its `.registry` to register your custom
-metric (in this case, we use a `IntCounterVec`.
+metric (in this case, we use a `IntCounterVec`).
 
 Then you can pass this counter through `.data()` to have it available within the resource
 responder.
@@ -117,14 +117,91 @@ async fn main() -> std::io::Result<()> {
         .register(Box::new(counter.clone()))
         .unwrap();
 
-    HttpServer::new(move || {
-        App::new()
-            .wrap(prometheus.clone())
-            .data(counter.clone())
-            .service(web::resource("/health").to(health))
-    })
-    .bind("127.0.0.1:8080")?
-    .run()
-    .await
+    # if false {
+        HttpServer::new(move || {
+            App::new()
+                .wrap(prometheus.clone())
+                .data(counter.clone())
+                .service(web::resource("/health").to(health))
+        })
+        .bind("127.0.0.1:8080")?
+        .run()
+        .await?;
+    # }
+    Ok(())
 }
 ```
+
+### Custom `Registry`
+
+Some apps might have more than one `actix_web::HttpServer`.
+If that's the case, you might want to use your own registry:
+
+```rust
+use actix_web::{web, App, HttpResponse, HttpServer};
+use actix_web_prom::PrometheusMetrics;
+use actix_rt::System;
+use prometheus::Registry;
+use std::thread;
+
+fn public_handler() -> HttpResponse {
+    HttpResponse::Ok().body("Everyone can see it!")
+}
+
+fn private_handler() -> HttpResponse {
+    HttpResponse::Ok().body("This can be hidden behind a firewall")
+}
+
+fn main() -> std::io::Result<()> {
+    let shared_registry = Registry::new();
+
+    let private_metrics = PrometheusMetrics::new_with_registry(
+                                        shared_registry.clone(),
+                                        "private_api",
+                                        Some("/metrics"),
+                                        None,
+                                    )
+                                    // It is safe to unwrap when __no other app has the same namespace__
+                                    .unwrap();
+    let public_metrics = PrometheusMetrics::new_with_registry(
+                                        shared_registry.clone(),
+                                        "public_api",
+                                        // Metrics should not be available from the outside
+                                        None,
+                                        None,
+                                    )
+                                    .unwrap();
+
+    let private_thread = thread::spawn(move || {
+        let mut sys = System::new("private");
+        let srv = HttpServer::new(move || {
+            App::new()
+                .wrap(private_metrics.clone())
+                .service(web::resource("/test").to(private_handler))
+        })
+        .bind("127.0.0.1:8081")
+        .unwrap()
+        .run();
+        sys.block_on(srv).unwrap();
+    });
+
+    let public_thread = thread::spawn(|| {
+        let mut sys = System::new("public");
+        let srv = HttpServer::new(move || {
+            App::new()
+                .wrap(public_metrics.clone())
+                .service(web::resource("/test").to(public_handler))
+        })
+        .bind("127.0.0.1:8082")
+        .unwrap()
+        .run();
+        sys.block_on(srv).unwrap();
+    });
+
+    private_thread.join().unwrap();
+    public_thread.join().unwrap();
+    Ok(())
+}
+
+```
+
