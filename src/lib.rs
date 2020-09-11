@@ -31,7 +31,7 @@ fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
-#[actix_rt::main]
+#[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let mut labels = HashMap::new();
     labels.insert("label1".to_string(), "value1".to_string());
@@ -100,7 +100,7 @@ fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
-#[actix_rt::main]
+#[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let prometheus = PrometheusMetrics::new("api", Some("/metrics"), None);
 
@@ -134,7 +134,7 @@ If that's the case, you might want to use your own registry:
 ```rust
 use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::PrometheusMetrics;
-use actix_rt::System;
+use actix_web::rt::System;
 use prometheus::Registry;
 use std::thread;
 
@@ -488,6 +488,7 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::rt as actix_rt;
     use actix_web::test::{call_service, init_service, read_body, read_response, TestRequest};
     use actix_web::{web, App, HttpResponse};
 
