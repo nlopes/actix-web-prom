@@ -503,7 +503,7 @@ mod tests {
         let mut app = init_service(
             App::new()
                 .wrap(prometheus)
-                .service(web::resource("/health_check").to(|| HttpResponse::Ok())),
+                .service(web::resource("/health_check").to(HttpResponse::Ok)),
         )
         .await;
 
@@ -545,7 +545,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         let mut app = init_service(
             App::new()
                 .wrap(prometheus)
-                .service(web::resource("/resource/{id}").to(|| HttpResponse::Ok())),
+                .service(web::resource("/resource/{id}").to(HttpResponse::Ok)),
         )
         .await;
 
@@ -587,7 +587,7 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
         let mut app = init_service(
             App::new()
                 .wrap(prometheus)
-                .service(web::resource("/health_check").to(|| HttpResponse::Ok())),
+                .service(web::resource("/health_check").to(HttpResponse::Ok)),
         )
         .await;
 
@@ -625,7 +625,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
         let mut app = init_service(
             App::new()
                 .wrap(prometheus)
-                .service(web::resource("/health_check").to(|| HttpResponse::Ok())),
+                .service(web::resource("/health_check").to(HttpResponse::Ok)),
         )
         .await;
 
@@ -697,7 +697,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         let encoder = TextEncoder::new();
         let metric_families = prometheus.registry.gather();
         encoder.encode(&metric_families, &mut buffer).unwrap();
-        let output = String::from_utf8(buffer.clone()).unwrap();
+        let output = String::from_utf8(buffer).unwrap();
 
         assert!(output.contains(
             "actix_web_prom_http_requests_total{endpoint=\"/metrics\",method=\"GET\",status=\"200\"} 1"
@@ -765,7 +765,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         let mut app = init_service(
             App::new()
                 .wrap(prometheus)
-                .service(web::resource("/health_check").to(|| HttpResponse::Ok())),
+                .service(web::resource("/health_check").to(HttpResponse::Ok)),
         )
         .await;
 

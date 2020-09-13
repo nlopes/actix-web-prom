@@ -14,4 +14,4 @@ before_script:
 script:
   - cargo fmt -- --check
   - cargo test --verbose
-  - cargo clippy
+  - cargo clippy --all-targets --all-features
