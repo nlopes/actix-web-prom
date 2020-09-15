@@ -399,6 +399,7 @@ where
             // the middleware and tell us what the endpoint should be.
             if inner.matches(&path, &method) {
                 head.status = StatusCode::OK;
+                head.headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"));
                 body = ResponseBody::Other(Body::from_message(inner.metrics()));
             }
             ResponseBody::Body(StreamLog {
@@ -447,6 +448,8 @@ where
 
 use pin_project::{pin_project, pinned_drop};
 use std::marker::PhantomData;
+use actix_http::http::header::CONTENT_TYPE;
+use actix_http::http::HeaderValue;
 
 #[doc(hidden)]
 #[pin_project(PinnedDrop)]
