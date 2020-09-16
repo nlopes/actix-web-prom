@@ -779,7 +779,6 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
 
         let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
-        println!("{}", body);
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
                 "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests
