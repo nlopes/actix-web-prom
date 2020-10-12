@@ -210,6 +210,8 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use actix_service::{Service, Transform};
+use actix_http::http::header::CONTENT_TYPE;
+use actix_http::http::HeaderValue;
 use actix_web::{
     dev::{Body, BodySize, MessageBody, ResponseBody, ServiceRequest, ServiceResponse},
     http::{Method, StatusCode},
@@ -449,8 +451,6 @@ where
     }
 }
 
-use actix_http::http::header::CONTENT_TYPE;
-use actix_http::http::HeaderValue;
 use pin_project::{pin_project, pinned_drop};
 use std::marker::PhantomData;
 
