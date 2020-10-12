@@ -18,7 +18,7 @@ By default two metrics are tracked (this assumes the namespace `actix_web_prom`)
 
 ## Usage
 
-First add `actix_web_prom` to your `Cargo.toml`:
+First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
