@@ -52,7 +52,7 @@ async fn main() -> std::io::Result<()> {
 
 Using the above as an example, a few things are worth mentioning:
  - `api` is the metrics namespace
- - `/metrics` will be auto exposed (GET requests only)
+ - `/metrics` will be auto exposed (GET requests only) with Content-Type header `content-type: text/plain; version=0.0.4; charset=utf-8`
  - `Some(labels)` is used to add fixed labels to the metrics; `None` can be passed instead
   if no additional labels are necessary.
 
