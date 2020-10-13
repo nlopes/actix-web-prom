@@ -209,6 +209,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use actix_http::http::{header::CONTENT_TYPE, HeaderValue};
 use actix_service::{Service, Transform};
 use actix_web::{
     dev::{Body, BodySize, MessageBody, ResponseBody, ServiceRequest, ServiceResponse},
@@ -399,6 +400,10 @@ where
             // the middleware and tell us what the endpoint should be.
             if inner.matches(&path, &method) {
                 head.status = StatusCode::OK;
+                head.headers.insert(
+                    CONTENT_TYPE,
+                    HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+                );
                 body = ResponseBody::Other(Body::from_message(inner.metrics()));
             }
             ResponseBody::Body(StreamLog {
@@ -515,8 +520,12 @@ mod tests {
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
-        let body = String::from_utf8(res.to_vec()).unwrap();
+        let res = call_service(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        assert_eq!(
+            res.headers().get(CONTENT_TYPE).unwrap(),
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
+        let body = String::from_utf8(read_body(res).await.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
                 "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests
