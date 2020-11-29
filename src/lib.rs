@@ -388,9 +388,10 @@ where
         let time = *this.time;
         let req = res.request();
         let method = req.method().clone();
-        let path = req
+        let pattern_or_path = req
             .match_pattern()
             .unwrap_or_else(|| req.path().to_string());
+        let path = req.path().to_string();
         let inner = this.inner.clone();
 
         Poll::Ready(Ok(res.map_body(move |mut head, mut body| {
@@ -412,7 +413,7 @@ where
                 clock: time,
                 inner,
                 status: head.status,
-                path,
+                path: pattern_or_path,
                 method,
             })
         })))
@@ -587,6 +588,29 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
             )
             .unwrap()
         ));
+    }
+
+    #[actix_rt::test]
+    async fn middleware_metrics_exposed_with_conflicting_pattern() {
+        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/metrics"), None);
+
+        let mut app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/{path}").to(HttpResponse::Ok)),
+        )
+        .await;
+
+        let res = call_service(&mut app, TestRequest::with_uri("/something").to_request()).await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(res.to_vec()).unwrap();
+        assert!(&body.contains(
+            &String::from_utf8(web::Bytes::from(
+                "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests"
+        ).to_vec()).unwrap()));
     }
 
     #[actix_rt::test]
