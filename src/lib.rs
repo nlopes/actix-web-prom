@@ -224,6 +224,8 @@ use futures::{
 };
 use prometheus::{Encoder, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder};
 
+const VERSION: Option<&'static str> = option_env!("CARGO_PKG_VERSION");
+
 #[derive(Clone)]
 #[must_use = "must be set up as middleware for actix-web"]
 /// By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
@@ -403,7 +405,14 @@ where
                 head.status = StatusCode::OK;
                 head.headers.insert(
                     CONTENT_TYPE,
-                    HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+                    HeaderValue::from_str(
+                        format!(
+                            "text/plain; version={}; charset=utf-8",
+                            VERSION.unwrap_or("unknown")
+                        )
+                        .as_str(),
+                    )
+                    .unwrap(),
                 );
                 body = ResponseBody::Other(Body::from_message(inner.metrics()));
             }
@@ -522,10 +531,12 @@ mod tests {
         assert_eq!(read_body(res).await, "");
 
         let res = call_service(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
-        assert_eq!(
-            res.headers().get(CONTENT_TYPE).unwrap(),
-            "text/plain; version=0.0.4; charset=utf-8"
+        let pkg_version: Option<&'static str> = option_env!("CARGO_PKG_VERSION");
+        let version = format!(
+            "text/plain; version={}; charset=utf-8",
+            pkg_version.unwrap_or("unknown")
         );
+        assert_eq!(res.headers().get(CONTENT_TYPE).unwrap(), version.as_str());
         let body = String::from_utf8(read_body(res).await.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
