@@ -1,24 +1,24 @@
 [package]
-name = "actix-web-prom"
-version = "0.5.1"
 authors = ["Norberto Lopes <nlopes.ml@gmail.com>"]
-edition = "2018"
+categories = ["web-programming"]
 description = "Actix-web middleware to expose Prometheus metrics"
 documentation = "https://docs.rs/actix-web-prom"
-repository = "https://github.com/nlopes/actix-web-prom.git"
-keywords = ["actix", "actix-web", "middleware", "prometheus", "web"]
-categories = ["web-programming"]
-license = "MIT"
-readme = "README.md"
+edition = "2018"
 exclude = [".gitignore", ".travis.yml"]
+keywords = ["actix", "actix-web", "middleware", "prometheus", "web"]
+license = "MIT"
+name = "actix-web-prom"
+readme = "README.md"
+repository = "https://github.com/nlopes/actix-web-prom.git"
+version = "0.5.1"
 
 [badges]
-travis-ci = { repository = "nlopes/actix-web-prom", branch = "master" }
+travis-ci = {repository = "nlopes/actix-web-prom", branch = "master"}
 
 [dependencies]
-actix-service = "^1.0"
-actix-web = { version = "4.0.0-beta.1", default-features = false }
 actix-http = "3.0.0-beta.1"
+actix-service = "^1.0"
+actix-web = {version = "4.0.0-beta.1", default-features = false}
 futures = "^0.3"
 pin-project = "^1.0"
-prometheus = { version = "^0.11", default-features = false }
+prometheus = {version = "^0.11", default-features = false}
