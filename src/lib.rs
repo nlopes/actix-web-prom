@@ -204,7 +204,7 @@ fn main() -> std::io::Result<()> {
 */
 #![deny(missing_docs)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -223,6 +223,7 @@ use futures::{
     Future,
 };
 use prometheus::{Encoder, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder};
+use regex::RegexSet;
 
 #[derive(Clone)]
 #[must_use = "must be set up as middleware for actix-web"]
@@ -243,6 +244,9 @@ pub struct PrometheusMetrics {
     pub(crate) namespace: String,
     pub(crate) endpoint: Option<String>,
     pub(crate) const_labels: HashMap<String, String>,
+
+    exclude: HashSet<String>,
+    exclude_regex: RegexSet,
 }
 
 impl PrometheusMetrics {
@@ -300,7 +304,23 @@ impl PrometheusMetrics {
             namespace: namespace.to_string(),
             endpoint: endpoint.map(|e| e.to_string()),
             const_labels: labels_hashmap,
+            exclude: HashSet::new(),
+            exclude_regex: RegexSet::empty(),
         })
+    }
+
+    /// Ignore and do not record metrics for specified path.
+    pub fn exclude<T: Into<String>>(mut self, path: T) -> Self {
+        self.exclude.insert(path.into());
+        self
+    }
+
+    /// Ignore and do not record metrics for paths matching the regex.
+    pub fn exclude_regex<T: Into<String>>(mut self, path: T) -> Self {
+        let mut patterns = self.exclude_regex.patterns().to_vec();
+        patterns.push(path.into());
+        self.exclude_regex = RegexSet::new(patterns).unwrap();
+        self
     }
 
     fn metrics(&self) -> String {
@@ -320,6 +340,10 @@ impl PrometheusMetrics {
     }
 
     fn update_metrics(&self, path: &str, method: &Method, status: StatusCode, clock: SystemTime) {
+        if self.exclude.contains(path) || self.exclude_regex.is_match(path) {
+            return;
+        }
+
         let method = method.to_string();
         let status = status.as_u16().to_string();
 
@@ -831,5 +855,63 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
             )
             .unwrap()
         ));
+    }
+
+    #[actix_rt::test]
+    async fn middleware_excludes() {
+        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/metrics"), None)
+            .exclude("/ping")
+            .exclude_regex("/readyz/.*");
+
+        let mut app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/health_check").to(HttpResponse::Ok))
+                .service(web::resource("/ping").to(HttpResponse::Ok))
+                .service(web::resource("/readyz/{subsystem}").to(HttpResponse::Ok)),
+        )
+        .await;
+
+        let res = call_service(
+            &mut app,
+            TestRequest::with_uri("/health_check").to_request(),
+        )
+        .await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_service(&mut app, TestRequest::with_uri("/ping").to_request()).await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_service(
+            &mut app,
+            TestRequest::with_uri("/readyz/database").to_request(),
+        )
+        .await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_service(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        assert_eq!(
+            res.headers().get(CONTENT_TYPE).unwrap(),
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
+        let body = String::from_utf8(read_body(res).await.to_vec()).unwrap();
+        assert!(&body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
+# TYPE actix_web_prom_http_requests_total counter
+actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",status=\"200\"} 1
+"
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
+
+        assert!(!&body.contains("endpoint=\"/ping\""));
+        assert!(!body.contains("endpoint=\"/readyz"));
     }
 }

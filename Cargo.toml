@@ -22,3 +22,4 @@ actix-http = "^2.1"
 futures = "^0.3"
 pin-project = "^1.0"
 prometheus = { version = "^0.11", default-features = false }
+regex = "^1.4"
