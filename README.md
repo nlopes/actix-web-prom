@@ -5,15 +5,15 @@
 [![crates.io](https://img.shields.io/crates/v/actix-web-prom.svg)](https://crates.io/crates/actix-web-prom)
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/nlopes/actix-web-prom/blob/master/LICENSE)
 
-Prometheus instrumentation for [actix-web](https://github.com/actix/actix-web). This middleware is heavily influenced by the work in [sd2k/rocket_prometheus](https://github.com/sd2k/rocket_prometheus). We track the same default metrics and allow for adding user defined metrics.
+Prometheus instrumentation for [actix-web](https://github.com/actix/actix-web). This middleware is heavily influenced by the work in [`sd2k/rocket_prometheus`](https://github.com/sd2k/rocket_prometheus). We track the same default metrics and allow for adding user defined metrics.
 
 By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
 
   - `actix_web_prom_http_requests_total` (labels: endpoint, method, status): the total number
-   of HTTP requests handled by the actix HttpServer.
+   of HTTP requests handled by the actix `HttpServer`.
 
   - `actix_web_prom_http_requests_duration_seconds` (labels: endpoint, method, status): the
-   request duration for all HTTP requests handled by the actix HttpServer.
+   request duration for all HTTP requests handled by the actix `HttpServer`.
 
 
 ## Usage

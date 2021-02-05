@@ -1,13 +1,13 @@
 /*!
-Prometheus instrumentation for [actix-web](https://github.com/actix/actix-web). This middleware is heavily influenced by the work in [sd2k/rocket_prometheus](https://github.com/sd2k/rocket_prometheus). We track the same default metrics and allow for adding user defined metrics.
+Prometheus instrumentation for [actix-web](https://github.com/actix/actix-web). This middleware is heavily influenced by the work in [`sd2k/rocket_prometheus`](https://github.com/sd2k/rocket_prometheus). We track the same default metrics and allow for adding user defined metrics.
 
 By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
 
   - `actix_web_prom_http_requests_total` (labels: endpoint, method, status): the total number
-   of HTTP requests handled by the actix HttpServer.
+   of HTTP requests handled by the actix `HttpServer`.
 
   - `actix_web_prom_http_requests_duration_seconds` (labels: endpoint, method, status): the
-   request duration for all HTTP requests handled by the actix HttpServer.
+   request duration for all HTTP requests handled by the actix `HttpServer`.
 
 
 # Usage
@@ -229,11 +229,11 @@ use prometheus::{Encoder, HistogramVec, IntCounterVec, Opts, Registry, TextEncod
 /// By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
 ///
 ///   - `actix_web_prom_http_requests_total` (labels: endpoint, method, status): the total
-///   number of HTTP requests handled by the actix HttpServer.
+///   number of HTTP requests handled by the actix `HttpServer`.
 ///
 ///   - `actix_web_prom_http_requests_duration_seconds` (labels: endpoint, method,
 ///    status): the request duration for all HTTP requests handled by the actix
-///    HttpServer.
+///    `HttpServer`.
 pub struct PrometheusMetrics {
     pub(crate) http_requests_total: IntCounterVec,
     pub(crate) http_requests_duration_seconds: HistogramVec,
@@ -246,7 +246,7 @@ pub struct PrometheusMetrics {
 }
 
 impl PrometheusMetrics {
-    /// Create a new PrometheusMetrics. You set the namespace and the metrics endpoint
+    /// Create a new `PrometheusMetrics`. You set the namespace and the metrics endpoint
     /// through here.
     pub fn new(
         namespace: &str,
@@ -259,8 +259,11 @@ impl PrometheusMetrics {
         PrometheusMetrics::new_with_registry(registry, namespace, endpoint, const_labels).unwrap()
     }
 
-    /// Create a new PrometheusMetrics.
-    /// Throws error if "<`namespace`>_http_requests_total" already registered
+    /// Create a new `PrometheusMetrics`.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if "<`namespace`>`_http_requests_total`" already registered
     pub fn new_with_registry(
         registry: Registry,
         namespace: &str,
@@ -298,7 +301,7 @@ impl PrometheusMetrics {
             http_requests_duration_seconds,
             registry,
             namespace: namespace.to_string(),
-            endpoint: endpoint.map(|e| e.to_string()),
+            endpoint: endpoint.map(ToString::to_string),
             const_labels: labels_hashmap,
         })
     }
