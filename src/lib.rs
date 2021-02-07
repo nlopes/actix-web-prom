@@ -211,12 +211,7 @@ use std::time::SystemTime;
 
 use actix_http::http::{header::CONTENT_TYPE, HeaderValue};
 use actix_service::{Service, Transform};
-use actix_web::{
-    dev::{Body, BodySize, MessageBody, ResponseBody, ServiceRequest, ServiceResponse},
-    http::{Method, StatusCode},
-    web::Bytes,
-    Error,
-};
+use actix_web::{Error, dev::{Body, BodySize, MessageBody, ResponseBody, ServiceRequest, ServiceResponse}, http::{Method, StatusCode}, web::Bytes};
 use futures::{
     future::{ok, Ready},
     task::{Context, Poll},
@@ -336,13 +331,12 @@ impl PrometheusMetrics {
     }
 }
 
-impl<S, B> Transform<S> for PrometheusMetrics
+impl<S> Transform<S> for PrometheusMetrics
 where
-    B: MessageBody,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S: Service<Request = ServiceRequest, Response = ServiceResponse, Error = Error>,
 {
     type Request = ServiceRequest;
-    type Response = ServiceResponse<StreamLog<B>>;
+    type Response = ServiceResponse;
     type Error = Error;
     type InitError = ();
     type Transform = PrometheusMetricsMiddleware<S>;
@@ -358,24 +352,22 @@ where
 
 #[doc(hidden)]
 #[pin_project::pin_project]
-pub struct LoggerResponse<S, B>
+pub struct LoggerResponse<S>
 where
-    B: MessageBody,
     S: Service,
 {
     #[pin]
     fut: S::Future,
     time: SystemTime,
     inner: Arc<PrometheusMetrics>,
-    _t: PhantomData<(B,)>,
+    _t: PhantomData<()>,
 }
 
-impl<S, B> Future for LoggerResponse<S, B>
+impl<S> Future for LoggerResponse<S>
 where
-    B: MessageBody,
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S: Service<Request = ServiceRequest, Response = ServiceResponse, Error = Error>,
 {
-    type Output = Result<ServiceResponse<StreamLog<B>>, Error>;
+    type Output = Result<ServiceResponse, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
@@ -407,7 +399,8 @@ where
                 );
                 body = ResponseBody::Other(Body::from_message(inner.metrics()));
             }
-            ResponseBody::Body(StreamLog {
+            ResponseBody::Other(
+                Body::from_message(StreamLog {
                 body,
                 size: 0,
                 clock: time,
@@ -415,7 +408,7 @@ where
                 status: head.status,
                 path: pattern_or_path,
                 method,
-            })
+            }))
         })))
     }
 }
@@ -427,15 +420,14 @@ pub struct PrometheusMetricsMiddleware<S> {
     inner: Arc<PrometheusMetrics>,
 }
 
-impl<S, B> Service for PrometheusMetricsMiddleware<S>
+impl<S> Service for PrometheusMetricsMiddleware<S>
 where
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-    B: MessageBody,
+    S: Service<Request = ServiceRequest, Response = ServiceResponse, Error = Error>,
 {
     type Request = ServiceRequest;
-    type Response = ServiceResponse<StreamLog<B>>;
+    type Response = ServiceResponse;
     type Error = S::Error;
-    type Future = LoggerResponse<S, B>;
+    type Future = LoggerResponse<S>;
 
     fn poll_ready(&mut self, ct: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(ct)
@@ -540,6 +532,53 @@ actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/health_check\",
                     "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
 # TYPE actix_web_prom_http_requests_total counter
 actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",status=\"200\"} 1
+"
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
+    }
+
+    #[actix_rt::test]
+    async fn middleware_scope() {
+        let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/internal/metrics"), None);
+
+        let mut app = init_service(
+            App::new()
+            .service(web::scope("/internal")
+                .wrap(prometheus)
+                .service(web::resource("/health_check").to(HttpResponse::Ok))),
+        )
+        .await;
+
+        let res = call_service(
+            &mut app,
+            TestRequest::with_uri("/internal/health_check").to_request(),
+        )
+        .await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_service(&mut app, TestRequest::with_uri("/internal/metrics").to_request()).await;
+        assert_eq!(
+            res.headers().get(CONTENT_TYPE).unwrap(),
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
+        let body = String::from_utf8(read_body(res).await.to_vec()).unwrap();
+        assert!(&body.contains(
+            &String::from_utf8(web::Bytes::from(
+                "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests
+# TYPE actix_web_prom_http_requests_duration_seconds histogram
+actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/internal/health_check\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
+"
+        ).to_vec()).unwrap()));
+        assert!(body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
+# TYPE actix_web_prom_http_requests_total counter
+actix_web_prom_http_requests_total{endpoint=\"/internal/health_check\",method=\"GET\",status=\"200\"} 1
 "
                 )
                 .to_vec()
