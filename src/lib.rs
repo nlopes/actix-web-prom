@@ -211,7 +211,12 @@ use std::time::SystemTime;
 
 use actix_http::http::{header::CONTENT_TYPE, HeaderValue};
 use actix_service::{Service, Transform};
-use actix_web::{Error, dev::{Body, BodySize, MessageBody, ResponseBody, ServiceRequest, ServiceResponse}, http::{Method, StatusCode}, web::Bytes};
+use actix_web::{
+    dev::{Body, BodySize, MessageBody, ResponseBody, ServiceRequest, ServiceResponse},
+    http::{Method, StatusCode},
+    web::Bytes,
+    Error,
+};
 use futures::{
     future::{ok, Ready},
     task::{Context, Poll},
@@ -399,8 +404,7 @@ where
                 );
                 body = ResponseBody::Other(Body::from_message(inner.metrics()));
             }
-            ResponseBody::Other(
-                Body::from_message(StreamLog {
+            ResponseBody::Other(Body::from_message(StreamLog {
                 body,
                 size: 0,
                 clock: time,
@@ -545,10 +549,11 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         let prometheus = PrometheusMetrics::new("actix_web_prom", Some("/internal/metrics"), None);
 
         let mut app = init_service(
-            App::new()
-            .service(web::scope("/internal")
-                .wrap(prometheus)
-                .service(web::resource("/health_check").to(HttpResponse::Ok))),
+            App::new().service(
+                web::scope("/internal")
+                    .wrap(prometheus)
+                    .service(web::resource("/health_check").to(HttpResponse::Ok)),
+            ),
         )
         .await;
 
@@ -560,7 +565,11 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = call_service(&mut app, TestRequest::with_uri("/internal/metrics").to_request()).await;
+        let res = call_service(
+            &mut app,
+            TestRequest::with_uri("/internal/metrics").to_request(),
+        )
+        .await;
         assert_eq!(
             res.headers().get(CONTENT_TYPE).unwrap(),
             "text/plain; version=0.0.4; charset=utf-8"
