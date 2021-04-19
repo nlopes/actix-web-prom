@@ -209,11 +209,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use actix_http::http::{header::CONTENT_TYPE, HeaderValue};
-use actix_service::{Service, Transform};
 use actix_web::{
-    dev::{Body, BodySize, MessageBody, ResponseBody, ServiceRequest, ServiceResponse},
-    http::{Method, StatusCode},
+    dev::{
+        Body, BodySize, MessageBody, ResponseBody, Service, ServiceRequest, ServiceResponse,
+        Transform,
+    },
+    http::{header::CONTENT_TYPE, HeaderValue, Method, StatusCode},
     web::Bytes,
     Error,
 };

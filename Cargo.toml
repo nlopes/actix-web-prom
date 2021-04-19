@@ -16,9 +16,7 @@ exclude = [".gitignore", ".travis.yml"]
 travis-ci = { repository = "nlopes/actix-web-prom", branch = "master" }
 
 [dependencies]
-actix-service = "^1.0"
 actix-web = { version = "^3.2", default-features = false }
-actix-http = "^2.1"
 futures = "^0.3"
 pin-project = "^1.0"
 prometheus = { version = "^0.11", default-features = false }
