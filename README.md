@@ -42,7 +42,6 @@ async fn main() -> std::io::Result<()> {
     let mut labels = HashMap::new();
     labels.insert("label1".to_string(), "value1".to_string());
     let prometheus = PrometheusMetrics::new("api", Some("/metrics"), Some(labels));
-    # if false {
         HttpServer::new(move || {
             App::new()
                 .wrap(prometheus.clone())
@@ -51,7 +50,6 @@ async fn main() -> std::io::Result<()> {
         .bind("127.0.0.1:8080")?
         .run()
         .await?;
-    # }
     Ok(())
 }
 ```
@@ -117,7 +115,6 @@ async fn main() -> std::io::Result<()> {
         .register(Box::new(counter.clone()))
         .unwrap();
 
-    # if false {
         HttpServer::new(move || {
             App::new()
                 .wrap(prometheus.clone())
@@ -127,7 +124,6 @@ async fn main() -> std::io::Result<()> {
         .bind("127.0.0.1:8080")?
         .run()
         .await?;
-    # }
     Ok(())
 }
 ```
