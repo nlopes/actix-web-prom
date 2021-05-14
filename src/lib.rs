@@ -223,7 +223,9 @@ use futures::{
     task::{Context, Poll},
     Future,
 };
-use prometheus::{Encoder, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder};
+use prometheus::{
+    Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
+};
 
 #[derive(Clone)]
 #[must_use = "must be set up as middleware for actix-web"]
@@ -260,13 +262,31 @@ impl PrometheusMetrics {
         PrometheusMetrics::new_with_registry(registry, namespace, endpoint, const_labels).unwrap()
     }
 
-    /// Create a new PrometheusMetrics.
+    /// Create a new PrometheusMetrics with specified registry.
     /// Throws error if "<`namespace`>_http_requests_total" already registered
     pub fn new_with_registry(
         registry: Registry,
         namespace: &str,
         endpoint: Option<&str>,
         const_labels: Option<HashMap<String, String>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        PrometheusMetrics::new_with_registry_and_buckets(
+            registry,
+            namespace,
+            endpoint,
+            const_labels,
+            prometheus::DEFAULT_BUCKETS,
+        )
+    }
+
+    /// Create a new PrometheusMetrics with specified registry and histogram buckets.
+    /// Throws error if "<`namespace`>_http_requests_total" already registered
+    pub fn new_with_registry_and_buckets(
+        registry: Registry,
+        namespace: &str,
+        endpoint: Option<&str>,
+        const_labels: Option<HashMap<String, String>>,
+        buckets: &[f64],
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let labels_hashmap = const_labels.map_or(HashMap::new(), |h| h);
         let http_requests_total_opts =
@@ -280,15 +300,16 @@ impl PrometheusMetrics {
             .register(Box::new(http_requests_total.clone()))
             .unwrap();
 
-        let http_requests_duration_seconds_opts = Opts::new(
+        let http_requests_duration_seconds_opts = HistogramOpts::new(
             "http_requests_duration_seconds",
             "HTTP request duration in seconds for all requests",
         )
         .namespace(namespace)
+        .buckets(buckets.to_vec())
         .const_labels(labels_hashmap.clone());
 
         let http_requests_duration_seconds = HistogramVec::new(
-            http_requests_duration_seconds_opts.into(),
+            http_requests_duration_seconds_opts,
             &["endpoint", "method", "status"],
         )
         .unwrap();
