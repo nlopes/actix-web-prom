@@ -31,7 +31,7 @@ You then instantiate the prometheus middleware and pass it to `.wrap()`:
 use std::collections::HashMap;
 
 use actix_web::{web, App, HttpResponse, HttpServer};
-use actix_web_prom::PrometheusMetrics;
+use actix_web_prom::{PrometheusMetrics, PrometheusMetricsBuilder};
 
 fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
@@ -41,8 +41,12 @@ fn health() -> HttpResponse {
 async fn main() -> std::io::Result<()> {
     let mut labels = HashMap::new();
     labels.insert("label1".to_string(), "value1".to_string());
-    let prometheus = PrometheusMetrics::new("api", Some("/metrics"), Some(labels));
-    # if false {
+    let prometheus = PrometheusMetricsBuilder::new("api")
+        .endpoint("/metrics")
+        .const_labels(labels)
+        .build()
+        .unwrap();
+
         HttpServer::new(move || {
             App::new()
                 .wrap(prometheus.clone())
@@ -51,7 +55,6 @@ async fn main() -> std::io::Result<()> {
         .bind("127.0.0.1:8080")?
         .run()
         .await?;
-    # }
     Ok(())
 }
 ```
@@ -98,7 +101,7 @@ responder.
 
 ```rust
 use actix_web::{web, App, HttpResponse, HttpServer};
-use actix_web_prom::PrometheusMetrics;
+use actix_web_prom::{PrometheusMetrics, PrometheusMetricsBuilder};
 use prometheus::{opts, IntCounterVec};
 
 fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
@@ -108,7 +111,10 @@ fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let prometheus = PrometheusMetrics::new("api", Some("/metrics"), None);
+    let prometheus = PrometheusMetricsBuilder::new("api")
+        .endpoint("/metrics")
+        .build()
+        .unwrap();
 
     let counter_opts = opts!("counter", "some random counter").namespace("api");
     let counter = IntCounterVec::new(counter_opts, &["endpoint", "method", "status"]).unwrap();
@@ -117,7 +123,6 @@ async fn main() -> std::io::Result<()> {
         .register(Box::new(counter.clone()))
         .unwrap();
 
-    # if false {
         HttpServer::new(move || {
             App::new()
                 .wrap(prometheus.clone())
@@ -127,7 +132,6 @@ async fn main() -> std::io::Result<()> {
         .bind("127.0.0.1:8080")?
         .run()
         .await?;
-    # }
     Ok(())
 }
 ```
@@ -139,7 +143,7 @@ If that's the case, you might want to use your own registry:
 
 ```rust
 use actix_web::{web, App, HttpResponse, HttpServer};
-use actix_web_prom::PrometheusMetrics;
+use actix_web_prom::{PrometheusMetrics, PrometheusMetricsBuilder};
 use actix_web::rt::System;
 use prometheus::Registry;
 use std::thread;
@@ -155,22 +159,19 @@ fn private_handler() -> HttpResponse {
 fn main() -> std::io::Result<()> {
     let shared_registry = Registry::new();
 
-    let private_metrics = PrometheusMetrics::new_with_registry(
-                                        shared_registry.clone(),
-                                        "private_api",
-                                        Some("/metrics"),
-                                        None,
-                                    )
-                                    // It is safe to unwrap when __no other app has the same namespace__
-                                    .unwrap();
-    let public_metrics = PrometheusMetrics::new_with_registry(
-                                        shared_registry.clone(),
-                                        "public_api",
-                                        // Metrics should not be available from the outside
-                                        None,
-                                        None,
-                                    )
-                                    .unwrap();
+    let private_metrics = PrometheusMetricsBuilder::new("private_api")
+        .registry(shared_registry.clone())
+        .endpoint("/metrics")
+        .build()
+        // It is safe to unwrap when __no other app has the same namespace__
+        .unwrap();
+
+    let public_metrics = PrometheusMetricsBuilder::new("public_api")
+        .registry(shared_registry.clone())
+        // Metrics should not be available from the outside
+        // so no endpoint is registered
+        .build()
+        .unwrap();
 
     let private_thread = thread::spawn(move || {
         let mut sys = System::new("private");
