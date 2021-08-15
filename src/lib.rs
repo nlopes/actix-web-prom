@@ -234,7 +234,7 @@ use prometheus::{
 #[derive(Debug)]
 /// Builder to create new PrometheusMetrics struct.HistogramVec
 ///
-/// It allow set optional parameters like registry, buckets, etc.
+/// It allows settting optional parameters like registry, buckets, etc.
 pub struct PrometheusMetricsBuilder {
     namespace: String,
     endpoint: Option<String>,
@@ -346,74 +346,6 @@ pub struct PrometheusMetrics {
 }
 
 impl PrometheusMetrics {
-    /// Create a new PrometheusMetrics. You set the namespace and the metrics endpoint
-    /// through here.
-    #[deprecated(note = "Use PrometheusMetricsBuilder instead")]
-    pub fn new(
-        namespace: &str,
-        endpoint: Option<&str>,
-        const_labels: Option<HashMap<String, String>>,
-    ) -> Self {
-        let mut builder = PrometheusMetricsBuilder::new(namespace);
-
-        if let Some(value) = const_labels {
-            builder = builder.const_labels(value);
-        }
-
-        if let Some(value) = endpoint {
-            builder = builder.endpoint(value);
-        }
-
-        builder.build().unwrap()
-    }
-
-    /// Create a new PrometheusMetrics with specified registry.
-    /// Throws error if "<`namespace`>_http_requests_total" already registered
-    #[deprecated(note = "Use PrometheusMetricsBuilder instead")]
-    pub fn new_with_registry(
-        registry: Registry,
-        namespace: &str,
-        endpoint: Option<&str>,
-        const_labels: Option<HashMap<String, String>>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut builder = PrometheusMetricsBuilder::new(namespace).registry(registry);
-
-        if let Some(value) = const_labels {
-            builder = builder.const_labels(value);
-        }
-
-        if let Some(value) = endpoint {
-            builder = builder.endpoint(value);
-        }
-
-        builder.build()
-    }
-
-    /// Create a new PrometheusMetrics with specified registry and histogram buckets.
-    /// Throws error if "<`namespace`>_http_requests_total" already registered
-    #[deprecated(note = "Use PrometheusMetricsBuilder instead")]
-    pub fn new_with_registry_and_buckets(
-        registry: Registry,
-        namespace: &str,
-        endpoint: Option<&str>,
-        const_labels: Option<HashMap<String, String>>,
-        buckets: &[f64],
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut builder = PrometheusMetricsBuilder::new(namespace)
-            .registry(registry)
-            .buckets(buckets);
-
-        if let Some(value) = const_labels {
-            builder = builder.const_labels(value);
-        }
-
-        if let Some(value) = endpoint {
-            builder = builder.endpoint(value);
-        }
-
-        builder.build()
-    }
-
     fn metrics(&self) -> String {
         let mut buffer = vec![];
         TextEncoder::new()
