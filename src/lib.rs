@@ -223,7 +223,6 @@ use actix_web::{
     web::Bytes,
     Error,
 };
-use actix_http::Error as HttpError;
 use futures::{
     future::{ok, Ready},
     task::{Context, Poll},
@@ -586,7 +585,7 @@ impl<B> PinnedDrop for StreamLog<B> {
 impl<B: MessageBody> MessageBody for StreamLog<B>
     where actix_http::Error: From<<B as MessageBody>::Error>
 {
-    type Error = HttpError;
+    type Error = actix_http::Error;
 
     fn size(&self) -> BodySize {
         self.body.size()
