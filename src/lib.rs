@@ -173,7 +173,7 @@ fn main() -> std::io::Result<()> {
 
 # if false {
     let private_thread = thread::spawn(move || {
-        let mut sys = System::new("private");
+        let mut sys = System::new();
         let srv = HttpServer::new(move || {
             App::new()
                 .wrap(private_metrics.clone())
@@ -186,7 +186,7 @@ fn main() -> std::io::Result<()> {
     });
 
     let public_thread = thread::spawn(|| {
-        let mut sys = System::new("public");
+        let mut sys = System::new();
         let srv = HttpServer::new(move || {
             App::new()
                 .wrap(public_metrics.clone())
@@ -223,6 +223,7 @@ use actix_web::{
     web::Bytes,
     Error,
 };
+use actix_http::Error as HttpError;
 use futures::{
     future::{ok, Ready},
     task::{Context, Poll},
@@ -448,15 +449,14 @@ impl PrometheusMetrics {
     }
 }
 
-impl<S> Transform<S> for PrometheusMetrics
+impl<S> Transform<S, ServiceRequest> for PrometheusMetrics
 where
-    S: Service<Request = ServiceRequest, Response = ServiceResponse, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse;
     type Error = Error;
-    type InitError = ();
     type Transform = PrometheusMetricsMiddleware<S>;
+    type InitError = ();
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
@@ -471,7 +471,7 @@ where
 #[pin_project::pin_project]
 pub struct LoggerResponse<S>
 where
-    S: Service,
+    S: Service<ServiceRequest>,
 {
     #[pin]
     fut: S::Future,
@@ -482,7 +482,7 @@ where
 
 impl<S> Future for LoggerResponse<S>
 where
-    S: Service<Request = ServiceRequest, Response = ServiceResponse, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
 {
     type Output = Result<ServiceResponse, Error>;
 
@@ -514,17 +514,17 @@ where
                     CONTENT_TYPE,
                     HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
                 );
-                body = ResponseBody::Other(Body::from_message(inner.metrics()));
+                body = Body::from_message(inner.metrics());
             }
-            ResponseBody::Other(Body::from_message(StreamLog {
-                body,
+            Body::from_message(StreamLog::<Body> {
+                body: ResponseBody::Other(body),
                 size: 0,
                 clock: time,
                 inner,
                 status: head.status,
                 path: pattern_or_path,
                 method,
-            }))
+            })
         })))
     }
 }
@@ -536,20 +536,19 @@ pub struct PrometheusMetricsMiddleware<S> {
     inner: Arc<PrometheusMetrics>,
 }
 
-impl<S> Service for PrometheusMetricsMiddleware<S>
+impl<S> Service<ServiceRequest> for PrometheusMetricsMiddleware<S>
 where
-    S: Service<Request = ServiceRequest, Response = ServiceResponse, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse;
     type Error = S::Error;
     type Future = LoggerResponse<S>;
 
-    fn poll_ready(&mut self, ct: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&self, ct: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(ct)
     }
 
-    fn call(&mut self, req: ServiceRequest) -> Self::Future {
+    fn call(&self, req: ServiceRequest) -> Self::Future {
         LoggerResponse {
             fut: self.service.call(req),
             time: Instant::now(),
@@ -584,12 +583,16 @@ impl<B> PinnedDrop for StreamLog<B> {
     }
 }
 
-impl<B: MessageBody> MessageBody for StreamLog<B> {
+impl<B: MessageBody> MessageBody for StreamLog<B>
+    where actix_http::Error: From<<B as MessageBody>::Error>
+{
+    type Error = HttpError;
+
     fn size(&self) -> BodySize {
         self.body.size()
     }
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Error>>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Self::Error>>> {
         let this = self.project();
         match MessageBody::poll_next(this.body, cx) {
             Poll::Ready(Some(Ok(chunk))) => {
