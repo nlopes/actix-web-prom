@@ -19,4 +19,4 @@ travis-ci = { repository = "nlopes/actix-web-prom", branch = "master" }
 actix-web = { version = "^4.0.0-beta.8", default-features = false }
 futures = "^0.3"
 pin-project = "^1.0"
-prometheus = { version = "^0.12", default-features = false }
+prometheus = { version = "^0.13", default-features = false }
