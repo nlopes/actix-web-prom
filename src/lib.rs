@@ -16,7 +16,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.5"
+actix-web-prom = "0.6.0-beta.1"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -173,7 +173,7 @@ fn main() -> std::io::Result<()> {
 
 # if false {
     let private_thread = thread::spawn(move || {
-        let mut sys = System::new("private");
+        let mut sys = System::new();
         let srv = HttpServer::new(move || {
             App::new()
                 .wrap(private_metrics.clone())
@@ -186,7 +186,7 @@ fn main() -> std::io::Result<()> {
     });
 
     let public_thread = thread::spawn(|| {
-        let mut sys = System::new("public");
+        let mut sys = System::new();
         let srv = HttpServer::new(move || {
             App::new()
                 .wrap(public_metrics.clone())
@@ -215,16 +215,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use actix_web::{
-    dev::{
-        Body, BodySize, MessageBody, ResponseBody, Service, ServiceRequest, ServiceResponse,
-        Transform,
-    },
+    body::AnyBody,
+    dev::{BodySize, MessageBody, Service, ServiceRequest, ServiceResponse, Transform},
     http::{header::CONTENT_TYPE, HeaderValue, Method, StatusCode},
     web::Bytes,
     Error,
 };
 use futures::{
     future::{ok, Ready},
+    ready,
     task::{Context, Poll},
     Future,
 };
@@ -235,7 +234,7 @@ use prometheus::{
 #[derive(Debug)]
 /// Builder to create new PrometheusMetrics struct.HistogramVec
 ///
-/// It allow set optional parameters like registry, buckets, etc.
+/// It allows settting optional parameters like registry, buckets, etc.
 pub struct PrometheusMetricsBuilder {
     namespace: String,
     endpoint: Option<String>,
@@ -347,74 +346,6 @@ pub struct PrometheusMetrics {
 }
 
 impl PrometheusMetrics {
-    /// Create a new PrometheusMetrics. You set the namespace and the metrics endpoint
-    /// through here.
-    #[deprecated(note = "Use PrometheusMetricsBuilder instead")]
-    pub fn new(
-        namespace: &str,
-        endpoint: Option<&str>,
-        const_labels: Option<HashMap<String, String>>,
-    ) -> Self {
-        let mut builder = PrometheusMetricsBuilder::new(namespace);
-
-        if let Some(value) = const_labels {
-            builder = builder.const_labels(value);
-        }
-
-        if let Some(value) = endpoint {
-            builder = builder.endpoint(value);
-        }
-
-        builder.build().unwrap()
-    }
-
-    /// Create a new PrometheusMetrics with specified registry.
-    /// Throws error if "<`namespace`>_http_requests_total" already registered
-    #[deprecated(note = "Use PrometheusMetricsBuilder instead")]
-    pub fn new_with_registry(
-        registry: Registry,
-        namespace: &str,
-        endpoint: Option<&str>,
-        const_labels: Option<HashMap<String, String>>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut builder = PrometheusMetricsBuilder::new(namespace).registry(registry);
-
-        if let Some(value) = const_labels {
-            builder = builder.const_labels(value);
-        }
-
-        if let Some(value) = endpoint {
-            builder = builder.endpoint(value);
-        }
-
-        builder.build()
-    }
-
-    /// Create a new PrometheusMetrics with specified registry and histogram buckets.
-    /// Throws error if "<`namespace`>_http_requests_total" already registered
-    #[deprecated(note = "Use PrometheusMetricsBuilder instead")]
-    pub fn new_with_registry_and_buckets(
-        registry: Registry,
-        namespace: &str,
-        endpoint: Option<&str>,
-        const_labels: Option<HashMap<String, String>>,
-        buckets: &[f64],
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut builder = PrometheusMetricsBuilder::new(namespace)
-            .registry(registry)
-            .buckets(buckets);
-
-        if let Some(value) = const_labels {
-            builder = builder.const_labels(value);
-        }
-
-        if let Some(value) = endpoint {
-            builder = builder.endpoint(value);
-        }
-
-        builder.build()
-    }
-
     fn metrics(&self) -> String {
         let mut buffer = vec![];
         TextEncoder::new()
@@ -439,20 +370,19 @@ impl PrometheusMetrics {
         let duration =
             (elapsed.as_secs() as f64) + f64::from(elapsed.subsec_nanos()) / 1_000_000_000_f64;
         self.http_requests_duration_seconds
-            .with_label_values(&[&path, &method, &status])
+            .with_label_values(&[path, &method, &status])
             .observe(duration);
 
         self.http_requests_total
-            .with_label_values(&[&path, &method, &status])
+            .with_label_values(&[path, &method, &status])
             .inc();
     }
 }
 
-impl<S> Transform<S> for PrometheusMetrics
+impl<S> Transform<S, ServiceRequest> for PrometheusMetrics
 where
-    S: Service<Request = ServiceRequest, Response = ServiceResponse, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse;
     type Error = Error;
     type InitError = ();
@@ -471,7 +401,7 @@ where
 #[pin_project::pin_project]
 pub struct LoggerResponse<S>
 where
-    S: Service,
+    S: Service<ServiceRequest>,
 {
     #[pin]
     fut: S::Future,
@@ -482,7 +412,7 @@ where
 
 impl<S> Future for LoggerResponse<S>
 where
-    S: Service<Request = ServiceRequest, Response = ServiceResponse, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
 {
     type Output = Result<ServiceResponse, Error>;
 
@@ -514,9 +444,9 @@ where
                     CONTENT_TYPE,
                     HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
                 );
-                body = ResponseBody::Other(Body::from_message(inner.metrics()));
+                body = AnyBody::from_message(inner.metrics());
             }
-            ResponseBody::Other(Body::from_message(StreamLog {
+            AnyBody::from_message(StreamLog {
                 body,
                 size: 0,
                 clock: time,
@@ -524,7 +454,7 @@ where
                 status: head.status,
                 path: pattern_or_path,
                 method,
-            }))
+            })
         })))
     }
 }
@@ -536,20 +466,19 @@ pub struct PrometheusMetricsMiddleware<S> {
     inner: Arc<PrometheusMetrics>,
 }
 
-impl<S> Service for PrometheusMetricsMiddleware<S>
+impl<S> Service<ServiceRequest> for PrometheusMetricsMiddleware<S>
 where
-    S: Service<Request = ServiceRequest, Response = ServiceResponse, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
 {
-    type Request = ServiceRequest;
     type Response = ServiceResponse;
     type Error = S::Error;
     type Future = LoggerResponse<S>;
 
-    fn poll_ready(&mut self, ct: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&self, ct: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.service.poll_ready(ct)
     }
 
-    fn call(&mut self, req: ServiceRequest) -> Self::Future {
+    fn call(&self, req: ServiceRequest) -> Self::Future {
         LoggerResponse {
             fut: self.service.call(req),
             time: Instant::now(),
@@ -564,9 +493,9 @@ use std::marker::PhantomData;
 
 #[doc(hidden)]
 #[pin_project(PinnedDrop)]
-pub struct StreamLog<B> {
+pub struct StreamLog {
     #[pin]
-    body: ResponseBody<B>,
+    body: AnyBody,
     size: usize,
     clock: Instant,
     inner: Arc<PrometheusMetrics>,
@@ -576,7 +505,7 @@ pub struct StreamLog<B> {
 }
 
 #[pinned_drop]
-impl<B> PinnedDrop for StreamLog<B> {
+impl PinnedDrop for StreamLog {
     fn drop(self: Pin<&mut Self>) {
         // update the metrics for this request at the very end of responding
         self.inner
@@ -584,19 +513,25 @@ impl<B> PinnedDrop for StreamLog<B> {
     }
 }
 
-impl<B: MessageBody> MessageBody for StreamLog<B> {
+impl MessageBody for StreamLog {
+    type Error = Error;
+
     fn size(&self) -> BodySize {
         self.body.size()
     }
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Error>>> {
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, Self::Error>>> {
         let this = self.project();
-        match MessageBody::poll_next(this.body, cx) {
-            Poll::Ready(Some(Ok(chunk))) => {
+        match ready!(this.body.poll_next(cx)) {
+            Some(Ok(chunk)) => {
                 *this.size += chunk.len();
                 Poll::Ready(Some(Ok(chunk)))
             }
-            val => val,
+            Some(Err(err)) => Poll::Ready(Some(Err(err.into()))),
+            None => Poll::Ready(None),
         }
     }
 }
@@ -617,22 +552,18 @@ mod tests {
             .build()
             .unwrap();
 
-        let mut app = init_service(
+        let app = init_service(
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/health_check").to(HttpResponse::Ok)),
         )
         .await;
 
-        let res = call_service(
-            &mut app,
-            TestRequest::with_uri("/health_check").to_request(),
-        )
-        .await;
+        let res = call_service(&app, TestRequest::with_uri("/health_check").to_request()).await;
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = call_service(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = call_service(&app, TestRequest::with_uri("/metrics").to_request()).await;
         assert_eq!(
             res.headers().get(CONTENT_TYPE).unwrap(),
             "text/plain; version=0.0.4; charset=utf-8"
@@ -666,7 +597,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
             .build()
             .unwrap();
 
-        let mut app = init_service(
+        let app = init_service(
             App::new().service(
                 web::scope("/internal")
                     .wrap(prometheus)
@@ -676,7 +607,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         .await;
 
         let res = call_service(
-            &mut app,
+            &app,
             TestRequest::with_uri("/internal/health_check").to_request(),
         )
         .await;
@@ -684,7 +615,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         assert_eq!(read_body(res).await, "");
 
         let res = call_service(
-            &mut app,
+            &app,
             TestRequest::with_uri("/internal/metrics").to_request(),
         )
         .await;
@@ -721,22 +652,18 @@ actix_web_prom_http_requests_total{endpoint=\"/internal/health_check\",method=\"
             .build()
             .unwrap();
 
-        let mut app = init_service(
+        let app = init_service(
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/resource/{id}").to(HttpResponse::Ok)),
         )
         .await;
 
-        let res = call_service(
-            &mut app,
-            TestRequest::with_uri("/resource/123").to_request(),
-        )
-        .await;
+        let res = call_service(&app, TestRequest::with_uri("/resource/123").to_request()).await;
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
@@ -766,18 +693,18 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
             .build()
             .unwrap();
 
-        let mut app = init_service(
+        let app = init_service(
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/{path}").to(HttpResponse::Ok)),
         )
         .await;
 
-        let res = call_service(&mut app, TestRequest::with_uri("/something").to_request()).await;
+        let res = call_service(&app, TestRequest::with_uri("/something").to_request()).await;
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
@@ -792,19 +719,15 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
             .build()
             .unwrap();
 
-        let mut app = init_service(
+        let app = init_service(
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/health_check").to(HttpResponse::Ok)),
         )
         .await;
 
-        call_service(
-            &mut app,
-            TestRequest::with_uri("/health_checkz").to_request(),
-        )
-        .await;
-        let res = read_response(&mut app, TestRequest::with_uri("/prometheus").to_request()).await;
+        call_service(&app, TestRequest::with_uri("/health_checkz").to_request()).await;
+        let res = read_response(&app, TestRequest::with_uri("/prometheus").to_request()).await;
         assert!(String::from_utf8(res.to_vec()).unwrap().contains(
             &String::from_utf8(
                 web::Bytes::from(
@@ -834,7 +757,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
             .register(Box::new(counter.clone()))
             .unwrap();
 
-        let mut app = init_service(
+        let app = init_service(
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/health_check").to(HttpResponse::Ok)),
@@ -842,12 +765,8 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
         .await;
 
         // Verify that 'counter' does not appear in the output before we use it
-        call_service(
-            &mut app,
-            TestRequest::with_uri("/health_check").to_request(),
-        )
-        .await;
-        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        call_service(&app, TestRequest::with_uri("/health_check").to_request()).await;
+        let res = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
         assert!(!String::from_utf8(res.to_vec()).unwrap().contains(
             &String::from_utf8(
                 web::Bytes::from(
@@ -868,8 +787,8 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         counter
             .with_label_values(&["endpoint", "method", "status"])
             .inc();
-        call_service(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
-        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        call_service(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
         assert!(String::from_utf8(res.to_vec()).unwrap().contains(
             &String::from_utf8(
                 web::Bytes::from(
@@ -891,14 +810,13 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
             .build()
             .unwrap();
 
-        let mut app =
+        let app =
             init_service(App::new().wrap(prometheus.clone()).service(
                 web::resource("/metrics").to(|| HttpResponse::Ok().body("not prometheus")),
             ))
             .await;
 
-        let response =
-            read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        let response = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
 
         // Assert app works
         assert_eq!(
@@ -936,7 +854,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
             .build()
             .unwrap();
 
-        let mut app = init_service(
+        let app = init_service(
             App::new()
                 .wrap(prometheus.clone())
                 .service(web::resource("/test").to(|| HttpResponse::Ok().finish())),
@@ -945,8 +863,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
 
         // all http counters are 0 because this is the first http request,
         // so we should get only 10 on test counter
-        let response =
-            read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        let response = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
 
         let ten_test_counter =
             "# HELP test_counter test counter help\n# TYPE test_counter counter\ntest_counter 10\n";
@@ -957,8 +874,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
 
         // all http counters are 1 because this is the second http request,
         // plus 10 on test counter
-        let response =
-            read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        let response = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let response_string = String::from_utf8(response.to_vec()).unwrap();
 
         let one_http_counters = "# HELP actix_web_prom_http_requests_total Total number of HTTP requests\n# TYPE actix_web_prom_http_requests_total counter\nactix_web_prom_http_requests_total{endpoint=\"/metrics\",method=\"GET\",status=\"200\"} 1";
@@ -978,22 +894,18 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
             .build()
             .unwrap();
 
-        let mut app = init_service(
+        let app = init_service(
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/health_check").to(HttpResponse::Ok)),
         )
         .await;
 
-        let res = call_service(
-            &mut app,
-            TestRequest::with_uri("/health_check").to_request(),
-        )
-        .await;
+        let res = call_service(&app, TestRequest::with_uri("/health_check").to_request()).await;
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = read_response(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(

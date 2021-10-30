@@ -22,7 +22,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.5"
+actix-web-prom = "0.6.0-beta.1"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -174,7 +174,7 @@ fn main() -> std::io::Result<()> {
         .unwrap();
 
     let private_thread = thread::spawn(move || {
-        let mut sys = System::new("private");
+        let mut sys = System::new();
         let srv = HttpServer::new(move || {
             App::new()
                 .wrap(private_metrics.clone())
@@ -187,7 +187,7 @@ fn main() -> std::io::Result<()> {
     });
 
     let public_thread = thread::spawn(|| {
-        let mut sys = System::new("public");
+        let mut sys = System::new();
         let srv = HttpServer::new(move || {
             App::new()
                 .wrap(public_metrics.clone())

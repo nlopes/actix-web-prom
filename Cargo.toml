@@ -1,6 +1,6 @@
 [package]
 name = "actix-web-prom"
-version = "0.5.1"
+version = "0.6.0-beta.1"
 authors = ["Norberto Lopes <nlopes.ml@gmail.com>"]
 edition = "2018"
 description = "Actix-web middleware to expose Prometheus metrics"
@@ -16,7 +16,7 @@ exclude = [".gitignore", ".travis.yml"]
 travis-ci = { repository = "nlopes/actix-web-prom", branch = "master" }
 
 [dependencies]
-actix-web = { version = "^3.2", default-features = false }
+actix-web = { version = "^4.0.0-beta.8", default-features = false }
 futures = "^0.3"
 pin-project = "^1.0"
 prometheus = { version = "^0.12", default-features = false }
