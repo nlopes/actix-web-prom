@@ -539,13 +539,12 @@ impl MessageBody for StreamLog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::rt as actix_rt;
     use actix_web::test::{call_service, init_service, read_body, read_response, TestRequest};
     use actix_web::{web, App, HttpResponse};
 
     use prometheus::{Counter, Opts};
 
-    #[actix_rt::test]
+    #[actix_web::test]
     async fn middleware_basic() {
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/metrics")
@@ -590,7 +589,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         ));
     }
 
-    #[actix_rt::test]
+    #[actix_web::test]
     async fn middleware_scope() {
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/internal/metrics")
@@ -645,7 +644,7 @@ actix_web_prom_http_requests_total{endpoint=\"/internal/health_check\",method=\"
         ));
     }
 
-    #[actix_rt::test]
+    #[actix_web::test]
     async fn middleware_match_pattern() {
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/metrics")
@@ -686,7 +685,7 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
         ));
     }
 
-    #[actix_rt::test]
+    #[actix_web::test]
     async fn middleware_metrics_exposed_with_conflicting_pattern() {
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/metrics")
@@ -712,7 +711,7 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
         ).to_vec()).unwrap()));
     }
 
-    #[actix_rt::test]
+    #[actix_web::test]
     async fn middleware_basic_failure() {
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/prometheus")
@@ -742,7 +741,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
         ));
     }
 
-    #[actix_rt::test]
+    #[actix_web::test]
     async fn middleware_custom_counter() {
         let counter_opts = Opts::new("counter", "some random counter").namespace("actix_web_prom");
         let counter = IntCounterVec::new(counter_opts, &["endpoint", "method", "status"]).unwrap();
@@ -803,7 +802,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         ));
     }
 
-    #[actix_rt::test]
+    #[actix_web::test]
     async fn middleware_none_endpoint() {
         // Init PrometheusMetrics with none URL
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
@@ -836,7 +835,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         ));
     }
 
-    #[actix_rt::test]
+    #[actix_web::test]
     async fn middleware_custom_registry_works() {
         // Init Prometheus Registry
         let registry = Registry::new();
@@ -883,7 +882,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         assert!(response_string.contains(one_http_counters));
     }
 
-    #[actix_rt::test]
+    #[actix_web::test]
     async fn middleware_const_labels() {
         let mut labels = HashMap::new();
         labels.insert("label1".to_string(), "value1".to_string());
