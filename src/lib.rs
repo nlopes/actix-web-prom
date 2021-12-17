@@ -16,7 +16,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.6.0-beta.3"
+actix-web-prom = "0.6.0-beta.4"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -215,9 +215,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use actix_web::{
-    body::AnyBody,
-    dev::{BodySize, MessageBody, Service, ServiceRequest, ServiceResponse, Transform},
-    http::{header::CONTENT_TYPE, HeaderValue, Method, StatusCode},
+    body::{BodySize, BoxBody, MessageBody},
+    dev::{Service, ServiceRequest, ServiceResponse, Transform},
+    http::{
+        header::{HeaderValue, CONTENT_TYPE},
+        Method, StatusCode,
+    },
     web::Bytes,
     Error,
 };
@@ -444,9 +447,9 @@ where
                     CONTENT_TYPE,
                     HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
                 );
-                body = AnyBody::from_message(inner.metrics());
+                body = BoxBody::new(inner.metrics());
             }
-            AnyBody::from_message(StreamLog {
+            BoxBody::new(StreamLog {
                 body,
                 size: 0,
                 clock: time,
@@ -495,7 +498,7 @@ use std::marker::PhantomData;
 #[pin_project(PinnedDrop)]
 pub struct StreamLog {
     #[pin]
-    body: AnyBody,
+    body: BoxBody,
     size: usize,
     clock: Instant,
     inner: Arc<PrometheusMetrics>,
@@ -539,7 +542,7 @@ impl MessageBody for StreamLog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::test::{call_service, init_service, read_body, read_response, TestRequest};
+    use actix_web::test::{call_and_read_body, call_service, init_service, read_body, TestRequest};
     use actix_web::{web, App, HttpResponse};
 
     use prometheus::{Counter, Opts};
@@ -662,7 +665,7 @@ actix_web_prom_http_requests_total{endpoint=\"/internal/health_check\",method=\"
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
@@ -703,7 +706,7 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
@@ -726,7 +729,7 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
         .await;
 
         call_service(&app, TestRequest::with_uri("/health_checkz").to_request()).await;
-        let res = read_response(&app, TestRequest::with_uri("/prometheus").to_request()).await;
+        let res = call_and_read_body(&app, TestRequest::with_uri("/prometheus").to_request()).await;
         assert!(String::from_utf8(res.to_vec()).unwrap().contains(
             &String::from_utf8(
                 web::Bytes::from(
@@ -765,7 +768,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
 
         // Verify that 'counter' does not appear in the output before we use it
         call_service(&app, TestRequest::with_uri("/health_check").to_request()).await;
-        let res = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
         assert!(!String::from_utf8(res.to_vec()).unwrap().contains(
             &String::from_utf8(
                 web::Bytes::from(
@@ -787,7 +790,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
             .with_label_values(&["endpoint", "method", "status"])
             .inc();
         call_service(&app, TestRequest::with_uri("/metrics").to_request()).await;
-        let res = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
         assert!(String::from_utf8(res.to_vec()).unwrap().contains(
             &String::from_utf8(
                 web::Bytes::from(
@@ -815,7 +818,8 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
             ))
             .await;
 
-        let response = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let response =
+            call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
 
         // Assert app works
         assert_eq!(
@@ -862,7 +866,8 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
 
         // all http counters are 0 because this is the first http request,
         // so we should get only 10 on test counter
-        let response = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let response =
+            call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
 
         let ten_test_counter =
             "# HELP test_counter test counter help\n# TYPE test_counter counter\ntest_counter 10\n";
@@ -873,7 +878,8 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
 
         // all http counters are 1 because this is the second http request,
         // plus 10 on test counter
-        let response = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let response =
+            call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let response_string = String::from_utf8(response.to_vec()).unwrap();
 
         let one_http_counters = "# HELP actix_web_prom_http_requests_total Total number of HTTP requests\n# TYPE actix_web_prom_http_requests_total counter\nactix_web_prom_http_requests_total{endpoint=\"/metrics\",method=\"GET\",status=\"200\"} 1";
@@ -904,7 +910,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = read_response(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
