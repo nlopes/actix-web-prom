@@ -217,9 +217,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
-use actix_web::body::EitherBody;
 use actix_web::{
-    body::{BodySize, BoxBody, MessageBody},
+    body::{BodySize, EitherBody, MessageBody},
     dev::{self, Service, ServiceRequest, ServiceResponse, Transform},
     http::{
         header::{HeaderValue, CONTENT_TYPE},
@@ -386,7 +385,7 @@ impl<S, B> Transform<S, ServiceRequest> for PrometheusMetrics
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 {
-    type Response = ServiceResponse<EitherBody<StreamLog<B>>>;
+    type Response = ServiceResponse<EitherBody<StreamLog<B>, StreamLog<String>>>;
     type Error = Error;
     type InitError = ();
     type Transform = PrometheusMetricsMiddleware<S>;
@@ -418,7 +417,7 @@ impl<S, B> Future for LoggerResponse<S>
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 {
-    type Output = Result<ServiceResponse<EitherBody<StreamLog<B>>>, Error>;
+    type Output = Result<ServiceResponse<EitherBody<StreamLog<B>, StreamLog<String>>>, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
@@ -449,7 +448,7 @@ where
                     HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
                 );
 
-                EitherBody::right(BoxBody::new(StreamLog {
+                EitherBody::right(StreamLog {
                     body: inner.metrics(),
                     size: 0,
                     clock: time,
@@ -457,7 +456,7 @@ where
                     status: head.status,
                     path: pattern_or_path,
                     method,
-                }))
+                })
             } else {
                 EitherBody::left(StreamLog {
                     body,
@@ -484,7 +483,7 @@ impl<S, B> Service<ServiceRequest> for PrometheusMetricsMiddleware<S>
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 {
-    type Response = ServiceResponse<EitherBody<StreamLog<B>>>;
+    type Response = ServiceResponse<EitherBody<StreamLog<B>, StreamLog<String>>>;
     type Error = S::Error;
     type Future = LoggerResponse<S>;
 
