@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use actix_web::{web, App, HttpResponse, HttpServer};
-use actix_web_prom::{PrometheusMetrics, PrometheusMetricsBuilder};
+use actix_web_prom::PrometheusMetricsBuilder;
 
 fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
