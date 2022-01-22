@@ -211,6 +211,7 @@ fn main() -> std::io::Result<()> {
 
 use std::collections::HashMap;
 use std::future::{ready, Future, Ready};
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -228,6 +229,7 @@ use actix_web::{
     Error,
 };
 use futures_core::ready;
+use pin_project_lite::pin_project;
 use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
 };
@@ -235,7 +237,7 @@ use prometheus::{
 #[derive(Debug)]
 /// Builder to create new PrometheusMetrics struct.HistogramVec
 ///
-/// It allows settting optional parameters like registry, buckets, etc.
+/// It allows setting optional parameters like registry, buckets, etc.
 pub struct PrometheusMetricsBuilder {
     namespace: String,
     endpoint: Option<String>,
@@ -398,17 +400,18 @@ where
     }
 }
 
-#[doc(hidden)]
-#[pin_project::pin_project]
-pub struct LoggerResponse<S>
-where
-    S: Service<ServiceRequest>,
-{
-    #[pin]
-    fut: S::Future,
-    time: Instant,
-    inner: Arc<PrometheusMetrics>,
-    _t: PhantomData<()>,
+pin_project! {
+    #[doc(hidden)]
+    pub struct LoggerResponse<S>
+        where
+        S: Service<ServiceRequest>,
+    {
+        #[pin]
+        fut: S::Future,
+        time: Instant,
+        inner: Arc<PrometheusMetrics>,
+        _t: PhantomData<()>,
+    }
 }
 
 impl<S, B> Future for LoggerResponse<S>
@@ -497,28 +500,26 @@ where
     }
 }
 
-use pin_project::{pin_project, pinned_drop};
-use std::marker::PhantomData;
+pin_project! {
+    #[doc(hidden)]
+    pub struct StreamLog<B> {
+        #[pin]
+        body: B,
+        size: usize,
+        clock: Instant,
+        inner: Arc<PrometheusMetrics>,
+        status: StatusCode,
+        path: String,
+        method: Method,
+    }
 
-#[doc(hidden)]
-#[pin_project(PinnedDrop)]
-pub struct StreamLog<B> {
-    #[pin]
-    body: B,
-    size: usize,
-    clock: Instant,
-    inner: Arc<PrometheusMetrics>,
-    status: StatusCode,
-    path: String,
-    method: Method,
-}
 
-#[pinned_drop]
-impl<B> PinnedDrop for StreamLog<B> {
-    fn drop(self: Pin<&mut Self>) {
-        // update the metrics for this request at the very end of responding
-        self.inner
-            .update_metrics(&self.path, &self.method, self.status, self.clock);
+    impl<B> PinnedDrop for StreamLog<B> {
+        fn drop(this: Pin<&mut Self>) {
+            // update the metrics for this request at the very end of responding
+            this.inner
+                .update_metrics(&this.path, &this.method, this.status, this.clock);
+        }
     }
 }
 
