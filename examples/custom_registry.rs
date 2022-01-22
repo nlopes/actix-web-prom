@@ -23,7 +23,7 @@ fn main() -> std::io::Result<()> {
         .unwrap();
 
     let public_metrics = PrometheusMetricsBuilder::new("public_api")
-        .registry(shared_registry.clone())
+        .registry(shared_registry)
         // Metrics should not be available from the outside
         // so no endpoint is registered
         .build()
