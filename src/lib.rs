@@ -210,13 +210,16 @@ fn main() -> std::io::Result<()> {
 #![deny(missing_docs)]
 
 use std::collections::HashMap;
+use std::future::{ready, Future, Ready};
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Instant;
 
 use actix_web::{
-    body::{BodySize, BoxBody, MessageBody},
-    dev::{Service, ServiceRequest, ServiceResponse, Transform},
+    body::{BodySize, EitherBody, MessageBody},
+    dev::{self, Service, ServiceRequest, ServiceResponse, Transform},
     http::{
         header::{HeaderValue, CONTENT_TYPE},
         Method, StatusCode,
@@ -224,12 +227,8 @@ use actix_web::{
     web::Bytes,
     Error,
 };
-use futures::{
-    future::{ok, Ready},
-    ready,
-    task::{Context, Poll},
-    Future,
-};
+use futures_core::ready;
+use pin_project_lite::pin_project;
 use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
 };
@@ -237,7 +236,7 @@ use prometheus::{
 #[derive(Debug)]
 /// Builder to create new PrometheusMetrics struct.HistogramVec
 ///
-/// It allows settting optional parameters like registry, buckets, etc.
+/// It allows setting optional parameters like registry, buckets, etc.
 pub struct PrometheusMetricsBuilder {
     namespace: String,
     endpoint: Option<String>,
@@ -382,47 +381,48 @@ impl PrometheusMetrics {
     }
 }
 
-impl<S> Transform<S, ServiceRequest> for PrometheusMetrics
+impl<S, B> Transform<S, ServiceRequest> for PrometheusMetrics
 where
-    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 {
-    type Response = ServiceResponse;
+    type Response = ServiceResponse<EitherBody<StreamLog<B>, StreamLog<String>>>;
     type Error = Error;
     type InitError = ();
     type Transform = PrometheusMetricsMiddleware<S>;
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(PrometheusMetricsMiddleware {
+        ready(Ok(PrometheusMetricsMiddleware {
             service,
             inner: Arc::new(self.clone()),
-        })
+        }))
     }
 }
 
-#[doc(hidden)]
-#[pin_project::pin_project]
-pub struct LoggerResponse<S>
-where
-    S: Service<ServiceRequest>,
-{
-    #[pin]
-    fut: S::Future,
-    time: Instant,
-    inner: Arc<PrometheusMetrics>,
-    _t: PhantomData<()>,
+pin_project! {
+    #[doc(hidden)]
+    pub struct LoggerResponse<S>
+        where
+        S: Service<ServiceRequest>,
+    {
+        #[pin]
+        fut: S::Future,
+        time: Instant,
+        inner: Arc<PrometheusMetrics>,
+        _t: PhantomData<()>,
+    }
 }
 
-impl<S> Future for LoggerResponse<S>
+impl<S, B> Future for LoggerResponse<S>
 where
-    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 {
-    type Output = Result<ServiceResponse, Error>;
+    type Output = Result<ServiceResponse<EitherBody<StreamLog<B>, StreamLog<String>>>, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
 
-        let res = match futures::ready!(this.fut.poll(cx)) {
+        let res = match ready!(this.fut.poll(cx)) {
             Ok(res) => res,
             Err(e) => return Poll::Ready(Err(e)),
         };
@@ -436,7 +436,7 @@ where
         let path = req.path().to_string();
         let inner = this.inner.clone();
 
-        Poll::Ready(Ok(res.map_body(move |mut head, mut body| {
+        Poll::Ready(Ok(res.map_body(move |mut head, body| {
             // We short circuit the response status and body to serve the endpoint
             // automagically. This way the user does not need to set the middleware *AND*
             // an endpoint to serve middleware results. The user is only required to set
@@ -447,17 +447,27 @@ where
                     CONTENT_TYPE,
                     HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
                 );
-                body = BoxBody::new(inner.metrics());
+
+                EitherBody::right(StreamLog {
+                    body: inner.metrics(),
+                    size: 0,
+                    clock: time,
+                    inner,
+                    status: head.status,
+                    path: pattern_or_path,
+                    method,
+                })
+            } else {
+                EitherBody::left(StreamLog {
+                    body,
+                    size: 0,
+                    clock: time,
+                    inner,
+                    status: head.status,
+                    path: pattern_or_path,
+                    method,
+                })
             }
-            BoxBody::new(StreamLog {
-                body,
-                size: 0,
-                clock: time,
-                inner,
-                status: head.status,
-                path: pattern_or_path,
-                method,
-            })
         })))
     }
 }
@@ -469,17 +479,15 @@ pub struct PrometheusMetricsMiddleware<S> {
     inner: Arc<PrometheusMetrics>,
 }
 
-impl<S> Service<ServiceRequest> for PrometheusMetricsMiddleware<S>
+impl<S, B> Service<ServiceRequest> for PrometheusMetricsMiddleware<S>
 where
-    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
 {
-    type Response = ServiceResponse;
+    type Response = ServiceResponse<EitherBody<StreamLog<B>, StreamLog<String>>>;
     type Error = S::Error;
     type Future = LoggerResponse<S>;
 
-    fn poll_ready(&self, ct: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.service.poll_ready(ct)
-    }
+    dev::forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         LoggerResponse {
@@ -491,33 +499,31 @@ where
     }
 }
 
-use pin_project::{pin_project, pinned_drop};
-use std::marker::PhantomData;
+pin_project! {
+    #[doc(hidden)]
+    pub struct StreamLog<B> {
+        #[pin]
+        body: B,
+        size: usize,
+        clock: Instant,
+        inner: Arc<PrometheusMetrics>,
+        status: StatusCode,
+        path: String,
+        method: Method,
+    }
 
-#[doc(hidden)]
-#[pin_project(PinnedDrop)]
-pub struct StreamLog {
-    #[pin]
-    body: BoxBody,
-    size: usize,
-    clock: Instant,
-    inner: Arc<PrometheusMetrics>,
-    status: StatusCode,
-    path: String,
-    method: Method,
-}
 
-#[pinned_drop]
-impl PinnedDrop for StreamLog {
-    fn drop(self: Pin<&mut Self>) {
-        // update the metrics for this request at the very end of responding
-        self.inner
-            .update_metrics(&self.path, &self.method, self.status, self.clock);
+    impl<B> PinnedDrop for StreamLog<B> {
+        fn drop(this: Pin<&mut Self>) {
+            // update the metrics for this request at the very end of responding
+            this.inner
+                .update_metrics(&this.path, &this.method, this.status, this.clock);
+        }
     }
 }
 
-impl MessageBody for StreamLog {
-    type Error = Error;
+impl<B: MessageBody> MessageBody for StreamLog<B> {
+    type Error = B::Error;
 
     fn size(&self) -> BodySize {
         self.body.size()
@@ -533,7 +539,7 @@ impl MessageBody for StreamLog {
                 *this.size += chunk.len();
                 Poll::Ready(Some(Ok(chunk)))
             }
-            Some(Err(err)) => Poll::Ready(Some(Err(err.into()))),
+            Some(Err(err)) => Poll::Ready(Some(Err(err))),
             None => Poll::Ready(None),
         }
     }
@@ -543,7 +549,7 @@ impl MessageBody for StreamLog {
 mod tests {
     use super::*;
     use actix_web::test::{call_and_read_body, call_service, init_service, read_body, TestRequest};
-    use actix_web::{web, App, HttpResponse};
+    use actix_web::{web, App, HttpResponse, Resource, Scope};
 
     use prometheus::{Counter, Opts};
 
@@ -931,5 +937,26 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
             )
             .unwrap()
         ));
+    }
+
+    #[test]
+    fn compat_with_non_boxed_middleware() {
+        let _app = App::new()
+            .wrap(PrometheusMetricsBuilder::new("").build().unwrap())
+            .wrap(actix_web::middleware::Logger::default())
+            .route("", web::to(|| async { "" }));
+
+        let _app = App::new()
+            .wrap(actix_web::middleware::Logger::default())
+            .wrap(PrometheusMetricsBuilder::new("").build().unwrap())
+            .route("", web::to(|| async { "" }));
+
+        let _scope = Scope::new("")
+            .wrap(PrometheusMetricsBuilder::new("").build().unwrap())
+            .route("", web::to(|| async { "" }));
+
+        let _resource = Resource::new("")
+            .wrap(PrometheusMetricsBuilder::new("").build().unwrap())
+            .route(web::to(|| async { "" }));
     }
 }

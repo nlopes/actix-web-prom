@@ -3,7 +3,7 @@ name = "actix-web-prom"
 version = "0.6.0-beta.5"
 authors = ["Norberto Lopes <nlopes.ml@gmail.com>"]
 edition = "2021"
-description = "Actix-web middleware to expose Prometheus metrics"
+description = "Actix Web middleware to expose Prometheus metrics"
 documentation = "https://docs.rs/actix-web-prom"
 repository = "https://github.com/nlopes/actix-web-prom.git"
 keywords = ["actix", "actix-web", "middleware", "prometheus", "web"]
@@ -16,7 +16,7 @@ exclude = [".gitignore", ".travis.yml"]
 travis-ci = { repository = "nlopes/actix-web-prom", branch = "master" }
 
 [dependencies]
-actix-web = { version = "=4.0.0-beta.21", default-features = false }
-futures = "^0.3"
-pin-project = "^1.0"
-prometheus = { version = "^0.13", default-features = false }
+actix-web = { version = "4.0.0-beta.21", default-features = false }
+futures-core = "0.3"
+pin-project-lite = "0.2"
+prometheus = { version = "0.13", default-features = false }
