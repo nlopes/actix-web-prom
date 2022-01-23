@@ -16,7 +16,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.6.0-beta.4"
+actix-web-prom = "0.6.0-beta.6"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
