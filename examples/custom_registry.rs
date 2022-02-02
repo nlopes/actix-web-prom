@@ -4,11 +4,11 @@ use actix_web_prom::PrometheusMetricsBuilder;
 use prometheus::Registry;
 use std::thread;
 
-fn public_handler() -> HttpResponse {
+async fn public_handler() -> HttpResponse {
     HttpResponse::Ok().body("Everyone can see it!")
 }
 
-fn private_handler() -> HttpResponse {
+async fn private_handler() -> HttpResponse {
     HttpResponse::Ok().body("This can be hidden behind a firewall")
 }
 

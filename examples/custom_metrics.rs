@@ -2,7 +2,7 @@ use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::PrometheusMetricsBuilder;
 use prometheus::{opts, IntCounterVec};
 
-fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
+async fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
     counter
         .with_label_values(&["endpoint", "method", "status"])
         .inc();

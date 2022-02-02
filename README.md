@@ -22,7 +22,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.6.0-beta.6"
+actix-web-prom = "0.6.0-rc.1"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::{PrometheusMetrics, PrometheusMetricsBuilder};
 
-fn health() -> HttpResponse {
+async fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
@@ -104,7 +104,7 @@ use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::{PrometheusMetrics, PrometheusMetricsBuilder};
 use prometheus::{opts, IntCounterVec};
 
-fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
+async fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
     counter.with_label_values(&["endpoint", "method", "status"]).inc();
     HttpResponse::Ok().finish()
 }
@@ -148,11 +148,11 @@ use actix_web::rt::System;
 use prometheus::Registry;
 use std::thread;
 
-fn public_handler() -> HttpResponse {
+async fn public_handler() -> HttpResponse {
     HttpResponse::Ok().body("Everyone can see it!")
 }
 
-fn private_handler() -> HttpResponse {
+async fn private_handler() -> HttpResponse {
     HttpResponse::Ok().body("This can be hidden behind a firewall")
 }
 
