@@ -16,7 +16,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.6.0-beta.6"
+actix-web-prom = "0.6.0-rc.1"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::{PrometheusMetrics, PrometheusMetricsBuilder};
 
-fn health() -> HttpResponse {
+async fn health() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
@@ -100,7 +100,7 @@ use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::{PrometheusMetrics, PrometheusMetricsBuilder};
 use prometheus::{opts, IntCounterVec};
 
-fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
+async fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
     counter.with_label_values(&["endpoint", "method", "status"]).inc();
     HttpResponse::Ok().finish()
 }
@@ -146,11 +146,11 @@ use actix_web::rt::System;
 use prometheus::Registry;
 use std::thread;
 
-fn public_handler() -> HttpResponse {
+async fn public_handler() -> HttpResponse {
     HttpResponse::Ok().body("Everyone can see it!")
 }
 
-fn private_handler() -> HttpResponse {
+async fn private_handler() -> HttpResponse {
     HttpResponse::Ok().body("This can be hidden behind a firewall")
 }
 
@@ -818,11 +818,10 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
             .build()
             .unwrap();
 
-        let app =
-            init_service(App::new().wrap(prometheus.clone()).service(
-                web::resource("/metrics").to(|| HttpResponse::Ok().body("not prometheus")),
-            ))
-            .await;
+        let app = init_service(App::new().wrap(prometheus.clone()).service(
+            web::resource("/metrics").to(|| async { HttpResponse::Ok().body("not prometheus") }),
+        ))
+        .await;
 
         let response =
             call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
@@ -866,7 +865,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         let app = init_service(
             App::new()
                 .wrap(prometheus.clone())
-                .service(web::resource("/test").to(|| HttpResponse::Ok().finish())),
+                .service(web::resource("/test").to(|| async { HttpResponse::Ok().finish() })),
         )
         .await;
 
