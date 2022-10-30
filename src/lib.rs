@@ -288,7 +288,7 @@ impl PrometheusMetricsBuilder {
     }
 
     /// Instantiate PrometheusMetrics struct
-    pub fn build(self) -> Result<PrometheusMetrics, Box<dyn std::error::Error>> {
+    pub fn build(self) -> Result<PrometheusMetrics, Box<dyn std::error::Error + Send + Sync>> {
         let http_requests_total_opts =
             Opts::new("http_requests_total", "Total number of HTTP requests")
                 .namespace(&self.namespace)
