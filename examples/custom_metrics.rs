@@ -20,6 +20,7 @@ async fn main() -> std::io::Result<()> {
     let counter = IntCounterVec::new(counter_opts, &["endpoint", "method", "status"]).unwrap();
     prometheus
         .registry
+        .as_ref()
         .register(Box::new(counter.clone()))
         .unwrap();
 

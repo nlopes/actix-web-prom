@@ -92,6 +92,9 @@ api_http_requests_total{endpoint="/metrics",label1="value1",method="GET",status=
 You instantiate `PrometheusMetrics` and then use its `.registry` to register your custom
 metric (in this case, we use a `IntCounterVec`).
 
+You can also register default prometheus registry with `.registry(prometheus::default_registry())`
+And use lazy_static global metrics
+
 Then you can pass this counter through `.data()` to have it available within the resource
 responder.
 
@@ -233,6 +236,28 @@ use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
 };
 
+/// Represents registry owned by metrics or
+/// static reference
+///
+/// Static reference can be used to refer to
+/// prometheus default metrics
+#[derive(Debug, Clone)]
+pub enum RegistryOwnedOrStatic {
+    /// Owned registry
+    Owned(Registry),
+    /// Reference to static registry, such as default prometheus registry
+    Static(&'static Registry),
+}
+
+impl AsRef<Registry> for RegistryOwnedOrStatic {
+    fn as_ref(&self) -> &Registry {
+        match self {
+            RegistryOwnedOrStatic::Owned(value) => value,
+            RegistryOwnedOrStatic::Static(value) => value,
+        }
+    }
+}
+
 #[derive(Debug)]
 /// Builder to create new PrometheusMetrics struct.HistogramVec
 ///
@@ -241,7 +266,7 @@ pub struct PrometheusMetricsBuilder {
     namespace: String,
     endpoint: Option<String>,
     const_labels: HashMap<String, String>,
-    registry: Registry,
+    registry: RegistryOwnedOrStatic,
     buckets: Vec<f64>,
 }
 
@@ -254,7 +279,7 @@ impl PrometheusMetricsBuilder {
             namespace: namespace.into(),
             endpoint: None,
             const_labels: HashMap::new(),
-            registry: Registry::new(),
+            registry: RegistryOwnedOrStatic::Owned(Registry::new()),
             buckets: prometheus::DEFAULT_BUCKETS.to_vec(),
         }
     }
@@ -283,7 +308,15 @@ impl PrometheusMetricsBuilder {
     ///
     /// By default one is set and is internal to PrometheusMetrics
     pub fn registry(mut self, value: Registry) -> Self {
-        self.registry = value;
+        self.registry = RegistryOwnedOrStatic::Owned(value);
+        self
+    }
+
+    /// Set registry by reference
+    ///
+    /// Can be used to set registry to default prometheus registry
+    pub fn registry_ref(mut self, value: &'static Registry) -> Self {
+        self.registry = RegistryOwnedOrStatic::Static(value);
         self
     }
 
@@ -311,8 +344,10 @@ impl PrometheusMetricsBuilder {
         )?;
 
         self.registry
+            .as_ref()
             .register(Box::new(http_requests_total.clone()))?;
         self.registry
+            .as_ref()
             .register(Box::new(http_requests_duration_seconds.clone()))?;
 
         Ok(PrometheusMetrics {
@@ -341,7 +376,7 @@ pub struct PrometheusMetrics {
     pub(crate) http_requests_duration_seconds: HistogramVec,
 
     /// exposed registry for custom prometheus metrics
-    pub registry: Registry,
+    pub registry: RegistryOwnedOrStatic,
     pub(crate) namespace: String,
     pub(crate) endpoint: Option<String>,
     pub(crate) const_labels: HashMap<String, String>,
@@ -351,7 +386,7 @@ impl PrometheusMetrics {
     fn metrics(&self) -> String {
         let mut buffer = vec![];
         TextEncoder::new()
-            .encode(&self.registry.gather(), &mut buffer)
+            .encode(&self.registry.as_ref().gather(), &mut buffer)
             .unwrap();
         String::from_utf8(buffer).unwrap()
     }
@@ -762,6 +797,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
 
         prometheus
             .registry
+            .as_ref()
             .register(Box::new(counter.clone()))
             .unwrap();
 
@@ -835,7 +871,7 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         // Assert counter counts
         let mut buffer = Vec::new();
         let encoder = TextEncoder::new();
-        let metric_families = prometheus.registry.gather();
+        let metric_families = prometheus.registry.as_ref().gather();
         encoder.encode(&metric_families, &mut buffer).unwrap();
         let output = String::from_utf8(buffer).unwrap();
 
