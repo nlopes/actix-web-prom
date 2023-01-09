@@ -96,6 +96,9 @@ api_http_requests_total{endpoint="/metrics",label1="value1",method="GET",status=
 You instantiate `PrometheusMetrics` and then use its `.registry` to register your custom
 metric (in this case, we use a `IntCounterVec`).
 
+You can also register default prometheus registry with `.registry(prometheus::default_registry())`
+And use lazy_static global metrics
+
 Then you can pass this counter through `.data()` to have it available within the resource
 responder.
 
