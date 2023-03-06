@@ -360,16 +360,32 @@ impl PrometheusMetricsBuilder {
 
     /// Instantiate PrometheusMetrics struct
     pub fn build(self) -> Result<PrometheusMetrics, Box<dyn std::error::Error + Send + Sync>> {
-        let http_requests_total_opts =
-            Opts::new(self.metrics_configuration.http_requests_total.name.to_owned(), "Total number of HTTP requests")
-                .namespace(&self.namespace)
-                .const_labels(self.const_labels.clone());
+        let http_requests_total_opts = Opts::new(
+            self.metrics_configuration
+                .http_requests_total
+                .name
+                .to_owned(),
+            "Total number of HTTP requests",
+        )
+        .namespace(&self.namespace)
+        .const_labels(self.const_labels.clone());
 
-        let http_requests_total =
-            IntCounterVec::new(http_requests_total_opts, &self.metrics_configuration.http_requests_total.labels.iter().map(|s| s.as_str()).collect::<Vec<&str>>())?;
+        let http_requests_total = IntCounterVec::new(
+            http_requests_total_opts,
+            &self
+                .metrics_configuration
+                .http_requests_total
+                .labels
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<&str>>(),
+        )?;
 
         let http_requests_duration_seconds_opts = HistogramOpts::new(
-            self.metrics_configuration.http_requests_duration_seconds.name.to_owned(),
+            self.metrics_configuration
+                .http_requests_duration_seconds
+                .name
+                .to_owned(),
             "HTTP request duration in seconds for all requests",
         )
         .namespace(&self.namespace)
@@ -378,7 +394,13 @@ impl PrometheusMetricsBuilder {
 
         let http_requests_duration_seconds = HistogramVec::new(
             http_requests_duration_seconds_opts,
-            &self.metrics_configuration.http_requests_duration_seconds.labels.iter().map(|s| s.as_str()).collect::<Vec<&str>>()
+            &self
+                .metrics_configuration
+                .http_requests_duration_seconds
+                .labels
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<&str>>(),
         )?;
 
         self.registry
@@ -407,13 +429,12 @@ impl PrometheusMetricsBuilder {
 /// Allows configuring name and labels set for the metric
 pub struct ActixMetric {
     name: String,
-    labels: Vec<String>,  
+    labels: Vec<String>,
 }
 
-impl ActixMetric { 
-
+impl ActixMetric {
     /// Create a new metric configuration
-    pub fn new(name: &str, labels: Vec<&str>) -> ActixMetric{
+    pub fn new(name: &str, labels: Vec<&str>) -> ActixMetric {
         ActixMetric {
             name: name.to_string(),
             labels: labels.into_iter().map(|s| s.to_string()).collect(),
@@ -431,12 +452,28 @@ pub struct ActixMetricsConfiguration {
 }
 
 impl ActixMetricsConfiguration {
-
     /// Create the default metrics configuration
     fn default() -> ActixMetricsConfiguration {
         ActixMetricsConfiguration {
-            http_requests_total: ActixMetric::new("http_requests_total", vec!["endpoint", "method", "status"]),
-            http_requests_duration_seconds: ActixMetric::new("http_requests_duration_seconds", vec!["endpoint", "method", "status"]),
+            http_requests_total: ActixMetric::new(
+                "http_requests_total",
+                vec!["endpoint", "method", "status"],
+            ),
+            http_requests_duration_seconds: ActixMetric::new(
+                "http_requests_duration_seconds",
+                vec!["endpoint", "method", "status"],
+            ),
+        }
+    }
+
+    /// Create new metrics configuration with given input
+    pub fn new(
+        http_requests_total: ActixMetric,
+        http_requests_duration_seconds: ActixMetric,
+    ) -> ActixMetricsConfiguration {
+        ActixMetricsConfiguration {
+            http_requests_total,
+            http_requests_duration_seconds,
         }
     }
 
@@ -451,7 +488,6 @@ impl ActixMetricsConfiguration {
         self.http_requests_duration_seconds = value;
         self
     }
-
 }
 
 #[derive(Clone)]
@@ -1296,6 +1332,53 @@ actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/health_check\",
                     "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
 # TYPE actix_web_prom_http_requests_total counter
 actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",label2=\"value2\",method=\"GET\",status=\"200\"} 1
+"
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
+    }
+
+    #[actix_web::test]
+    async fn middleware_metircs_configuration() {
+        let metrics_config = ActixMetricsConfiguration::new(
+            ActixMetric::new("my_http_requests_total", vec!["path", "method", "status"]),
+            ActixMetric::new("my_http_request_duration", vec!["path", "method", "status"]),
+        );
+
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .endpoint("/metrics")
+            .metrics_configuration(metrics_config)
+            .build()
+            .unwrap();
+
+        let app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/health_check").to(HttpResponse::Ok)),
+        )
+        .await;
+
+        let res = call_service(&app, TestRequest::with_uri("/health_check").to_request()).await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(res.to_vec()).unwrap();
+        assert!(&body.contains(
+            &String::from_utf8(web::Bytes::from(
+                "# HELP actix_web_prom_my_http_request_duration HTTP request duration in seconds for all requests
+# TYPE actix_web_prom_my_http_request_duration histogram
+actix_web_prom_my_http_request_duration_bucket{method=\"GET\",path=\"/health_check\",status=\"200\",le=\"0.005\"} 1
+"
+        ).to_vec()).unwrap()));
+        assert!(body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "# HELP actix_web_prom_my_http_requests_total Total number of HTTP requests
+# TYPE actix_web_prom_my_http_requests_total counter
+actix_web_prom_my_http_requests_total{method=\"GET\",path=\"/health_check\",status=\"200\"} 1
 "
                 )
                 .to_vec()
