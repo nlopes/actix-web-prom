@@ -247,6 +247,7 @@ pub struct PrometheusMetricsBuilder {
     buckets: Vec<f64>,
     exclude: HashSet<String>,
     exclude_regex: RegexSet,
+    exclude_status: HashSet<StatusCode>,
 }
 
 impl PrometheusMetricsBuilder {
@@ -262,6 +263,7 @@ impl PrometheusMetricsBuilder {
             buckets: prometheus::DEFAULT_BUCKETS.to_vec(),
             exclude: HashSet::new(),
             exclude_regex: RegexSet::empty(),
+            exclude_status: HashSet::new(),
         }
     }
 
@@ -307,6 +309,12 @@ impl PrometheusMetricsBuilder {
         self
     }
 
+    /// Ignore and do not record metrics for paths returning the status code.
+    pub fn exclude_status<T: Into<StatusCode>>(mut self, status: T) -> Self {
+        self.exclude_status.insert(status.into());
+        self
+    }
+
     /// Instantiate PrometheusMetrics struct
     pub fn build(self) -> Result<PrometheusMetrics, Box<dyn std::error::Error + Send + Sync>> {
         let http_requests_total_opts =
@@ -344,6 +352,7 @@ impl PrometheusMetricsBuilder {
             const_labels: self.const_labels,
             exclude: self.exclude,
             exclude_regex: self.exclude_regex,
+            exclude_status: self.exclude_status,
         })
     }
 }
@@ -370,6 +379,7 @@ pub struct PrometheusMetrics {
 
     pub(crate) exclude: HashSet<String>,
     pub(crate) exclude_regex: RegexSet,
+    pub(crate) exclude_status: HashSet<StatusCode>,
 }
 
 impl PrometheusMetrics {
@@ -390,7 +400,10 @@ impl PrometheusMetrics {
     }
 
     fn update_metrics(&self, path: &str, method: &Method, status: StatusCode, clock: Instant) {
-        if self.exclude.contains(path) || self.exclude_regex.is_match(path) {
+        if self.exclude.contains(path)
+            || self.exclude_regex.is_match(path)
+            || self.exclude_status.contains(&status)
+        {
             return;
         }
 
@@ -994,6 +1007,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
             .endpoint("/metrics")
             .exclude("/ping")
             .exclude_regex("/readyz/.*")
+            .exclude_status(StatusCode::NOT_FOUND)
             .build()
             .unwrap();
 
@@ -1026,6 +1040,10 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
+        let res = call_service(&mut app, TestRequest::with_uri("/notfound").to_request()).await;
+        assert!(res.status().is_client_error());
+        assert_eq!(read_body(res).await, "");
+
         let res = call_service(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
         assert_eq!(
             res.headers().get(CONTENT_TYPE).unwrap(),
@@ -1046,6 +1064,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         ));
 
         assert!(!&body.contains("endpoint=\"/ping\""));
-        assert!(!body.contains("endpoint=\"/readyz"));
+        assert!(!&body.contains("endpoint=\"/readyz"));
+        assert!(!body.contains("endpoint=\"/notfound"));
     }
 }
