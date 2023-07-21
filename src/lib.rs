@@ -373,8 +373,10 @@ pub struct PrometheusMetrics {
 
     /// exposed registry for custom prometheus metrics
     pub registry: Registry,
+    #[allow(dead_code)]
     pub(crate) namespace: String,
     pub(crate) endpoint: Option<String>,
+    #[allow(dead_code)]
     pub(crate) const_labels: HashMap<String, String>,
 
     pub(crate) exclude: HashSet<String>,
@@ -478,7 +480,7 @@ where
         let path = req.path().to_string();
         let inner = this.inner.clone();
 
-        Poll::Ready(Ok(res.map_body(move |mut head, body| {
+        Poll::Ready(Ok(res.map_body(move |head, body| {
             // We short circuit the response status and body to serve the endpoint
             // automagically. This way the user does not need to set the middleware *AND*
             // an endpoint to serve middleware results. The user is only required to set
@@ -1011,7 +1013,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
             .build()
             .unwrap();
 
-        let mut app = init_service(
+        let app = init_service(
             App::new()
                 .wrap(prometheus)
                 .service(web::resource("/health_check").to(HttpResponse::Ok))
@@ -1020,31 +1022,23 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
         )
         .await;
 
-        let res = call_service(
-            &mut app,
-            TestRequest::with_uri("/health_check").to_request(),
-        )
-        .await;
+        let res = call_service(&app, TestRequest::with_uri("/health_check").to_request()).await;
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = call_service(&mut app, TestRequest::with_uri("/ping").to_request()).await;
+        let res = call_service(&app, TestRequest::with_uri("/ping").to_request()).await;
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = call_service(
-            &mut app,
-            TestRequest::with_uri("/readyz/database").to_request(),
-        )
-        .await;
+        let res = call_service(&app, TestRequest::with_uri("/readyz/database").to_request()).await;
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
-        let res = call_service(&mut app, TestRequest::with_uri("/notfound").to_request()).await;
+        let res = call_service(&app, TestRequest::with_uri("/notfound").to_request()).await;
         assert!(res.status().is_client_error());
         assert_eq!(read_body(res).await, "");
 
-        let res = call_service(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        let res = call_service(&app, TestRequest::with_uri("/metrics").to_request()).await;
         assert_eq!(
             res.headers().get(CONTENT_TYPE).unwrap(),
             "text/plain; version=0.0.4; charset=utf-8"
