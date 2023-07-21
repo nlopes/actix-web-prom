@@ -15,4 +15,4 @@ The format is based on [Keep a Changelog] and this project adheres to [Semantic 
 - Add ability to exclude paths and statuses from metrics  by @riordanp in https://github.com/nlopes/actix-web-prom/pull/71
 - Add ability to exclude paths from metrics by @kppullin in https://github.com/nlopes/actix-web-prom/pull/46
 
-  [0.7.0]: https://github.com/nlopes/actix-web-prom/releases/tag/0.7.0
+  [0.7.0]: https://github.com/nlopes/actix-web-prom/releases/tag/v0.7.0
