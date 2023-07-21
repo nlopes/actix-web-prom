@@ -209,7 +209,7 @@ fn main() -> std::io::Result<()> {
 */
 #![deny(missing_docs)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::{ready, Future, Ready};
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -233,6 +233,8 @@ use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
 };
 
+use regex::RegexSet;
+
 #[derive(Debug)]
 /// Builder to create new PrometheusMetrics struct.HistogramVec
 ///
@@ -243,6 +245,9 @@ pub struct PrometheusMetricsBuilder {
     const_labels: HashMap<String, String>,
     registry: Registry,
     buckets: Vec<f64>,
+    exclude: HashSet<String>,
+    exclude_regex: RegexSet,
+    exclude_status: HashSet<StatusCode>,
 }
 
 impl PrometheusMetricsBuilder {
@@ -256,6 +261,9 @@ impl PrometheusMetricsBuilder {
             const_labels: HashMap::new(),
             registry: Registry::new(),
             buckets: prometheus::DEFAULT_BUCKETS.to_vec(),
+            exclude: HashSet::new(),
+            exclude_regex: RegexSet::empty(),
+            exclude_status: HashSet::new(),
         }
     }
 
@@ -284,6 +292,26 @@ impl PrometheusMetricsBuilder {
     /// By default one is set and is internal to PrometheusMetrics
     pub fn registry(mut self, value: Registry) -> Self {
         self.registry = value;
+        self
+    }
+
+    /// Ignore and do not record metrics for specified path.
+    pub fn exclude<T: Into<String>>(mut self, path: T) -> Self {
+        self.exclude.insert(path.into());
+        self
+    }
+
+    /// Ignore and do not record metrics for paths matching the regex.
+    pub fn exclude_regex<T: Into<String>>(mut self, path: T) -> Self {
+        let mut patterns = self.exclude_regex.patterns().to_vec();
+        patterns.push(path.into());
+        self.exclude_regex = RegexSet::new(patterns).unwrap();
+        self
+    }
+
+    /// Ignore and do not record metrics for paths returning the status code.
+    pub fn exclude_status<T: Into<StatusCode>>(mut self, status: T) -> Self {
+        self.exclude_status.insert(status.into());
         self
     }
 
@@ -322,6 +350,9 @@ impl PrometheusMetricsBuilder {
             namespace: self.namespace,
             endpoint: self.endpoint,
             const_labels: self.const_labels,
+            exclude: self.exclude,
+            exclude_regex: self.exclude_regex,
+            exclude_status: self.exclude_status,
         })
     }
 }
@@ -345,6 +376,10 @@ pub struct PrometheusMetrics {
     pub(crate) namespace: String,
     pub(crate) endpoint: Option<String>,
     pub(crate) const_labels: HashMap<String, String>,
+
+    pub(crate) exclude: HashSet<String>,
+    pub(crate) exclude_regex: RegexSet,
+    pub(crate) exclude_status: HashSet<StatusCode>,
 }
 
 impl PrometheusMetrics {
@@ -365,6 +400,13 @@ impl PrometheusMetrics {
     }
 
     fn update_metrics(&self, path: &str, method: &Method, status: StatusCode, clock: Instant) {
+        if self.exclude.contains(path)
+            || self.exclude_regex.is_match(path)
+            || self.exclude_status.contains(&status)
+        {
+            return;
+        }
+
         let method = method.to_string();
         let status = status.as_u16().to_string();
 
@@ -957,5 +999,72 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
         let _resource = Resource::new("")
             .wrap(PrometheusMetricsBuilder::new("").build().unwrap())
             .route(web::to(|| async { "" }));
+    }
+
+    #[actix_web::test]
+    async fn middleware_excludes() {
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .endpoint("/metrics")
+            .exclude("/ping")
+            .exclude_regex("/readyz/.*")
+            .exclude_status(StatusCode::NOT_FOUND)
+            .build()
+            .unwrap();
+
+        let mut app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/health_check").to(HttpResponse::Ok))
+                .service(web::resource("/ping").to(HttpResponse::Ok))
+                .service(web::resource("/readyz/{subsystem}").to(HttpResponse::Ok)),
+        )
+        .await;
+
+        let res = call_service(
+            &mut app,
+            TestRequest::with_uri("/health_check").to_request(),
+        )
+        .await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_service(&mut app, TestRequest::with_uri("/ping").to_request()).await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_service(
+            &mut app,
+            TestRequest::with_uri("/readyz/database").to_request(),
+        )
+        .await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_service(&mut app, TestRequest::with_uri("/notfound").to_request()).await;
+        assert!(res.status().is_client_error());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_service(&mut app, TestRequest::with_uri("/metrics").to_request()).await;
+        assert_eq!(
+            res.headers().get(CONTENT_TYPE).unwrap(),
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
+        let body = String::from_utf8(read_body(res).await.to_vec()).unwrap();
+        assert!(&body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
+# TYPE actix_web_prom_http_requests_total counter
+actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",status=\"200\"} 1
+"
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
+
+        assert!(!&body.contains("endpoint=\"/ping\""));
+        assert!(!&body.contains("endpoint=\"/readyz"));
+        assert!(!body.contains("endpoint=\"/notfound"));
     }
 }

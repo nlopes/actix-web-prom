@@ -17,3 +17,4 @@ actix-web = { version = "4.0", default-features = false, features = ["macros"] }
 futures-core = "0.3"
 pin-project-lite = "0.2"
 prometheus = { version = "0.13", default-features = false }
+regex = "^1.4"
