@@ -21,3 +21,4 @@ regex = "^1.4"
 
 [features]
 process = ["prometheus/process"]
+strfmt = { version = "0.2.4" }

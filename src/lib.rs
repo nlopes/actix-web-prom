@@ -250,6 +250,7 @@ use actix_web::{
         Method, StatusCode, Version,
     },
     web::Bytes,
+    HttpMessage,
     Error,
 };
 use futures_core::ready;
@@ -259,6 +260,16 @@ use prometheus::{
 };
 
 use regex::RegexSet;
+use strfmt::strfmt;
+
+/// MetricsConfig define middleware and config struct to change the behaviour of the metrics
+/// struct to define some particularities
+#[derive(Debug, Clone)]
+pub struct MetricsConfig {
+    /// list of params where the cardinality matters
+    pub cardinality_keep_params: Vec<String>
+}
+
 
 #[derive(Debug)]
 /// Builder to create new PrometheusMetrics struct.HistogramVec
@@ -551,9 +562,38 @@ where
         let req = res.request();
         let method = req.method().clone();
         let version = req.version();
+
+        // piece of code to allow for more cardinality 
+        let params_keep_path_cardinality = match req.extensions_mut().get::<MetricsConfig>() {
+            Some(config) => config.cardinality_keep_params.clone(),
+            None => vec![]
+        };
+
         let pattern_or_path = req
             .match_pattern()
+            .and_then(|base_pattern| {
+                let mut params: HashMap<String, String> = HashMap::new();
+
+                for (key, val) in req.match_info().iter() {
+                    if params_keep_path_cardinality.contains(&key.to_string()) {
+                        params.insert(key.to_string(), val.to_string());
+                        continue;
+                    }
+                    params.insert(key.to_string(), format!("{{{}}}", key));
+                }
+
+                let mixed_cardinality_pattern = strfmt(&base_pattern, &params);
+
+                Some(match mixed_cardinality_pattern {
+                    Ok(res) => res,
+                    Err(_) => {
+                        // may be we need to log something to warn that we didn't managed to build the pattern?
+                        base_pattern
+                    }
+                })
+            })
             .unwrap_or_else(|| req.path().to_string());
+
         let path = req.path().to_string();
         let inner = this.inner.clone();
 
