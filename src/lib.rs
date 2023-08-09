@@ -1341,7 +1341,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
     }
 
     #[actix_web::test]
-    async fn middleware_metircs_configuration() {
+    async fn middleware_metrics_configuration() {
         let metrics_config = ActixMetricsConfiguration::new(
             ActixMetric::new("my_http_requests_total", vec!["path", "method", "status"]),
             ActixMetric::new("my_http_request_duration", vec!["path", "method", "status"]),
