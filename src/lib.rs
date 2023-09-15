@@ -6,7 +6,7 @@ By default two metrics are tracked (this assumes the namespace `actix_web_prom`)
   - `actix_web_prom_http_requests_total` (labels: endpoint, method, status): the total number
    of HTTP requests handled by the actix HttpServer.
 
-  - `actix_web_prom_http_requests_duration_seconds` (labels: endpoint, method, status): the
+  - `actix_web_prom_http_request_duration_seconds` (labels: endpoint, method, status): the
    request duration for all HTTP requests handled by the actix HttpServer.
 
 
@@ -66,22 +66,22 @@ A call to the /metrics endpoint will expose your metrics:
 
 ```shell
 $ curl http://localhost:8080/metrics
-# HELP api_http_requests_duration_seconds HTTP request duration in seconds for all requests
-# TYPE api_http_requests_duration_seconds histogram
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.005"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.01"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.025"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.05"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.1"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.25"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.5"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="1"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="2.5"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="5"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="10"} 1
-api_http_requests_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="+Inf"} 1
-api_http_requests_duration_seconds_sum{endpoint="/metrics",label1="value1",method="GET",status="200"} 0.00003
-api_http_requests_duration_seconds_count{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
+# HELP api_http_request_duration_seconds HTTP request duration in seconds for all requests
+# TYPE api_http_request_duration_seconds histogram
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.005"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.01"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.025"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.05"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.1"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.25"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="0.5"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="1"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="2.5"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="5"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="10"} 1
+api_http_request_duration_seconds_bucket{endpoint="/metrics",label1="value1",method="GET",status="200",le="+Inf"} 1
+api_http_request_duration_seconds_sum{endpoint="/metrics",label1="value1",method="GET",status="200"} 0.00003
+api_http_request_duration_seconds_count{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
 # HELP api_http_requests_total Total number of HTTP requests
 # TYPE api_http_requests_total counter
 api_http_requests_total{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
@@ -325,27 +325,27 @@ impl PrometheusMetricsBuilder {
         let http_requests_total =
             IntCounterVec::new(http_requests_total_opts, &["endpoint", "method", "status"])?;
 
-        let http_requests_duration_seconds_opts = HistogramOpts::new(
-            "http_requests_duration_seconds",
+        let http_request_duration_seconds_opts = HistogramOpts::new(
+            "http_request_duration_seconds",
             "HTTP request duration in seconds for all requests",
         )
         .namespace(&self.namespace)
         .buckets(self.buckets.to_vec())
         .const_labels(self.const_labels.clone());
 
-        let http_requests_duration_seconds = HistogramVec::new(
-            http_requests_duration_seconds_opts,
+        let http_request_duration_seconds = HistogramVec::new(
+            http_request_duration_seconds_opts,
             &["endpoint", "method", "status"],
         )?;
 
         self.registry
             .register(Box::new(http_requests_total.clone()))?;
         self.registry
-            .register(Box::new(http_requests_duration_seconds.clone()))?;
+            .register(Box::new(http_request_duration_seconds.clone()))?;
 
         Ok(PrometheusMetrics {
             http_requests_total,
-            http_requests_duration_seconds,
+            http_request_duration_seconds,
             registry: self.registry,
             namespace: self.namespace,
             endpoint: self.endpoint,
@@ -364,12 +364,12 @@ impl PrometheusMetricsBuilder {
 ///   - `actix_web_prom_http_requests_total` (labels: endpoint, method, status): the total
 ///   number of HTTP requests handled by the actix HttpServer.
 ///
-///   - `actix_web_prom_http_requests_duration_seconds` (labels: endpoint, method,
+///   - `actix_web_prom_http_request_duration_seconds` (labels: endpoint, method,
 ///    status): the request duration for all HTTP requests handled by the actix
 ///    HttpServer.
 pub struct PrometheusMetrics {
     pub(crate) http_requests_total: IntCounterVec,
-    pub(crate) http_requests_duration_seconds: HistogramVec,
+    pub(crate) http_request_duration_seconds: HistogramVec,
 
     /// exposed registry for custom prometheus metrics
     pub registry: Registry,
@@ -415,7 +415,7 @@ impl PrometheusMetrics {
         let elapsed = clock.elapsed();
         let duration =
             (elapsed.as_secs() as f64) + f64::from(elapsed.subsec_nanos()) / 1_000_000_000_f64;
-        self.http_requests_duration_seconds
+        self.http_request_duration_seconds
             .with_label_values(&[path, &method, &status])
             .observe(duration);
 
@@ -623,9 +623,9 @@ mod tests {
         let body = String::from_utf8(read_body(res).await.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
-                "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests
-# TYPE actix_web_prom_http_requests_duration_seconds histogram
-actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/health_check\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
+                "# HELP actix_web_prom_http_request_duration_seconds HTTP request duration in seconds for all requests
+# TYPE actix_web_prom_http_request_duration_seconds histogram
+actix_web_prom_http_request_duration_seconds_bucket{endpoint=\"/health_check\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
 "
         ).to_vec()).unwrap()));
         assert!(body.contains(
@@ -678,9 +678,9 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         let body = String::from_utf8(read_body(res).await.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
-                "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests
-# TYPE actix_web_prom_http_requests_duration_seconds histogram
-actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/internal/health_check\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
+                "# HELP actix_web_prom_http_request_duration_seconds HTTP request duration in seconds for all requests
+# TYPE actix_web_prom_http_request_duration_seconds histogram
+actix_web_prom_http_request_duration_seconds_bucket{endpoint=\"/internal/health_check\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
 "
         ).to_vec()).unwrap()));
         assert!(body.contains(
@@ -719,9 +719,9 @@ actix_web_prom_http_requests_total{endpoint=\"/internal/health_check\",method=\"
         let body = String::from_utf8(res.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
-                "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests
-# TYPE actix_web_prom_http_requests_duration_seconds histogram
-actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/resource/{id}\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
+                "# HELP actix_web_prom_http_request_duration_seconds HTTP request duration in seconds for all requests
+# TYPE actix_web_prom_http_request_duration_seconds histogram
+actix_web_prom_http_request_duration_seconds_bucket{endpoint=\"/resource/{id}\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
 "
         ).to_vec()).unwrap()));
         assert!(body.contains(
@@ -760,7 +760,7 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
         let body = String::from_utf8(res.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
-                "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests"
+                "# HELP actix_web_prom_http_request_duration_seconds HTTP request duration in seconds for all requests"
         ).to_vec()).unwrap()));
     }
 
@@ -963,9 +963,9 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         let body = String::from_utf8(res.to_vec()).unwrap();
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
-                "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests
-# TYPE actix_web_prom_http_requests_duration_seconds histogram
-actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/health_check\",label1=\"value1\",label2=\"value2\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
+                "# HELP actix_web_prom_http_request_duration_seconds HTTP request duration in seconds for all requests
+# TYPE actix_web_prom_http_request_duration_seconds histogram
+actix_web_prom_http_request_duration_seconds_bucket{endpoint=\"/health_check\",label1=\"value1\",label2=\"value2\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
 "
         ).to_vec()).unwrap()));
         assert!(body.contains(
