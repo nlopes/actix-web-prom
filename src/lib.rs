@@ -87,6 +87,31 @@ api_http_requests_duration_seconds_count{endpoint="/metrics",label1="value1",met
 api_http_requests_total{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
 ```
 
+## Features
+If you enable `process` feature of this crate, default process metrics will also be collected.
+[Default process metrics](https://prometheus.io/docs/instrumenting/writing_clientlibs/#process-metrics)
+
+```shell
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 0.22
+# HELP process_max_fds Maximum number of open file descriptors.
+# TYPE process_max_fds gauge
+process_max_fds 1048576
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 78
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 17526784
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1628105774.92
+# HELP process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE process_virtual_memory_bytes gauge
+process_virtual_memory_bytes 1893163008
+```
+
 ## Custom metrics
 
 You instantiate `PrometheusMetrics` and then use its `.registry` to register your custom
@@ -390,6 +415,17 @@ impl PrometheusMetrics {
         TextEncoder::new()
             .encode(&self.registry.gather(), &mut buffer)
             .unwrap();
+
+        #[cfg(feature = "process")]
+        {
+            let mut process_metrics = vec![];
+            TextEncoder::new()
+                .encode(&prometheus::gather(), &mut process_metrics)
+                .unwrap();
+
+            buffer.extend_from_slice(&process_metrics);
+        }
+
         String::from_utf8(buffer).unwrap()
     }
 
@@ -917,13 +953,11 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         // so we should get only 10 on test counter
         let response =
             call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(response.to_vec()).unwrap();
 
         let ten_test_counter =
             "# HELP test_counter test counter help\n# TYPE test_counter counter\ntest_counter 10\n";
-        assert_eq!(
-            String::from_utf8(response.to_vec()).unwrap(),
-            ten_test_counter
-        );
+        assert!(body.contains(ten_test_counter));
 
         // all http counters are 1 because this is the second http request,
         // plus 10 on test counter
