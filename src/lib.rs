@@ -317,7 +317,7 @@ impl PrometheusMetricsBuilder {
         self
     }
 
-    /// Report HTTP version of served request as "http_version" label
+    /// Report HTTP version of served request as "version" label
     pub fn enable_http_version_label(mut self, enable: bool) -> Self {
         self.enable_http_version_label = enable;
         self
@@ -331,7 +331,7 @@ impl PrometheusMetricsBuilder {
                 .const_labels(self.const_labels.clone());
 
         let label_names = if self.enable_http_version_label {
-            ["http_version", "endpoint", "method", "status"].as_slice()
+            ["version", "endpoint", "method", "status"].as_slice()
         } else {
             ["endpoint", "method", "status"].as_slice()
         };
@@ -734,14 +734,14 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
             assert!(&body.contains(
                 &String::from_utf8(web::Bytes::from(
                     format!(
-                        "actix_web_prom_http_requests_duration_seconds_bucket{{endpoint=\"/health_check\",http_version=\"{}\",method=\"GET\",status=\"200\",le=\"0.005\"}} {}
+                        "actix_web_prom_http_requests_duration_seconds_bucket{{endpoint=\"/health_check\",method=\"GET\",status=\"200\",version=\"{}\",le=\"0.005\"}} {}
 ", PrometheusMetrics::http_version_label(http_version), repeats)
             ).to_vec()).unwrap()));
 
             assert!(&body.contains(
                 &String::from_utf8(web::Bytes::from(
                     format!(
-                        "actix_web_prom_http_requests_total{{endpoint=\"/health_check\",http_version=\"{}\",method=\"GET\",status=\"200\"}} {}
+                        "actix_web_prom_http_requests_total{{endpoint=\"/health_check\",method=\"GET\",status=\"200\",version=\"{}\"}} {}
 ", PrometheusMetrics::http_version_label(http_version), repeats)
             ).to_vec()).unwrap()));
         }
