@@ -87,6 +87,31 @@ api_http_request_duration_seconds_count{endpoint="/metrics",label1="value1",meth
 api_http_requests_total{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
 ```
 
+## Features
+If you enable `process` feature of this crate, default process metrics will also be collected.
+[Default process metrics](https://prometheus.io/docs/instrumenting/writing_clientlibs/#process-metrics)
+
+```shell
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 0.22
+# HELP process_max_fds Maximum number of open file descriptors.
+# TYPE process_max_fds gauge
+process_max_fds 1048576
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 78
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 17526784
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1628105774.92
+# HELP process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE process_virtual_memory_bytes gauge
+process_virtual_memory_bytes 1893163008
+```
+
 ## Custom metrics
 
 You instantiate `PrometheusMetrics` and then use its `.registry` to register your custom
@@ -222,7 +247,7 @@ use actix_web::{
     dev::{self, Service, ServiceRequest, ServiceResponse, Transform},
     http::{
         header::{HeaderValue, CONTENT_TYPE},
-        Method, StatusCode,
+        Method, StatusCode, Version,
     },
     web::Bytes,
     Error,
@@ -248,6 +273,7 @@ pub struct PrometheusMetricsBuilder {
     exclude: HashSet<String>,
     exclude_regex: RegexSet,
     exclude_status: HashSet<StatusCode>,
+    enable_http_version_label: bool,
 }
 
 impl PrometheusMetricsBuilder {
@@ -264,6 +290,7 @@ impl PrometheusMetricsBuilder {
             exclude: HashSet::new(),
             exclude_regex: RegexSet::empty(),
             exclude_status: HashSet::new(),
+            enable_http_version_label: false,
         }
     }
 
@@ -315,6 +342,12 @@ impl PrometheusMetricsBuilder {
         self
     }
 
+    /// Report HTTP version of served request as "version" label
+    pub fn enable_http_version_label(mut self, enable: bool) -> Self {
+        self.enable_http_version_label = enable;
+        self
+    }
+
     /// Instantiate PrometheusMetrics struct
     pub fn build(self) -> Result<PrometheusMetrics, Box<dyn std::error::Error + Send + Sync>> {
         let http_requests_total_opts =
@@ -322,8 +355,13 @@ impl PrometheusMetricsBuilder {
                 .namespace(&self.namespace)
                 .const_labels(self.const_labels.clone());
 
-        let http_requests_total =
-            IntCounterVec::new(http_requests_total_opts, &["endpoint", "method", "status"])?;
+        let label_names = if self.enable_http_version_label {
+            ["version", "endpoint", "method", "status"].as_slice()
+        } else {
+            ["endpoint", "method", "status"].as_slice()
+        };
+
+        let http_requests_total = IntCounterVec::new(http_requests_total_opts, label_names)?;
 
         let http_request_duration_seconds_opts = HistogramOpts::new(
             "http_request_duration_seconds",
@@ -333,10 +371,8 @@ impl PrometheusMetricsBuilder {
         .buckets(self.buckets.to_vec())
         .const_labels(self.const_labels.clone());
 
-        let http_request_duration_seconds = HistogramVec::new(
-            http_request_duration_seconds_opts,
-            &["endpoint", "method", "status"],
-        )?;
+        let http_request_duration_seconds =
+            HistogramVec::new(http_request_duration_seconds_opts, label_names)?;
 
         self.registry
             .register(Box::new(http_requests_total.clone()))?;
@@ -353,6 +389,7 @@ impl PrometheusMetricsBuilder {
             exclude: self.exclude,
             exclude_regex: self.exclude_regex,
             exclude_status: self.exclude_status,
+            enable_http_version_label: self.enable_http_version_label,
         })
     }
 }
@@ -382,6 +419,7 @@ pub struct PrometheusMetrics {
     pub(crate) exclude: HashSet<String>,
     pub(crate) exclude_regex: RegexSet,
     pub(crate) exclude_status: HashSet<StatusCode>,
+    pub(crate) enable_http_version_label: bool,
 }
 
 impl PrometheusMetrics {
@@ -390,6 +428,17 @@ impl PrometheusMetrics {
         TextEncoder::new()
             .encode(&self.registry.gather(), &mut buffer)
             .unwrap();
+
+        #[cfg(feature = "process")]
+        {
+            let mut process_metrics = vec![];
+            TextEncoder::new()
+                .encode(&prometheus::gather(), &mut process_metrics)
+                .unwrap();
+
+            buffer.extend_from_slice(&process_metrics);
+        }
+
         String::from_utf8(buffer).unwrap()
     }
 
@@ -401,7 +450,14 @@ impl PrometheusMetrics {
         }
     }
 
-    fn update_metrics(&self, path: &str, method: &Method, status: StatusCode, clock: Instant) {
+    fn update_metrics(
+        &self,
+        http_version: Version,
+        path: &str,
+        method: &Method,
+        status: StatusCode,
+        clock: Instant,
+    ) {
         if self.exclude.contains(path)
             || self.exclude_regex.is_match(path)
             || self.exclude_status.contains(&status)
@@ -409,19 +465,39 @@ impl PrometheusMetrics {
             return;
         }
 
-        let method = method.to_string();
-        let status = status.as_u16().to_string();
+        let label_values = [
+            Self::http_version_label(http_version),
+            path,
+            method.as_str(),
+            status.as_str(),
+        ];
+        let label_values = if self.enable_http_version_label {
+            &label_values[..]
+        } else {
+            &label_values[1..]
+        };
 
         let elapsed = clock.elapsed();
         let duration =
             (elapsed.as_secs() as f64) + f64::from(elapsed.subsec_nanos()) / 1_000_000_000_f64;
         self.http_request_duration_seconds
-            .with_label_values(&[path, &method, &status])
+            .with_label_values(label_values)
             .observe(duration);
 
         self.http_requests_total
-            .with_label_values(&[path, &method, &status])
+            .with_label_values(label_values)
             .inc();
+    }
+
+    fn http_version_label(version: Version) -> &'static str {
+        match version {
+            v if v == Version::HTTP_09 => "HTTP/0.9",
+            v if v == Version::HTTP_10 => "HTTP/1.0",
+            v if v == Version::HTTP_11 => "HTTP/1.1",
+            v if v == Version::HTTP_2 => "HTTP/2.0",
+            v if v == Version::HTTP_3 => "HTTP/3.0",
+            _ => "<unrecognized>",
+        }
     }
 }
 
@@ -474,6 +550,7 @@ where
         let time = *this.time;
         let req = res.request();
         let method = req.method().clone();
+        let version = req.version();
         let pattern_or_path = req
             .match_pattern()
             .unwrap_or_else(|| req.path().to_string());
@@ -500,6 +577,7 @@ where
                     status: head.status,
                     path: pattern_or_path,
                     method,
+                    version,
                 })
             } else {
                 EitherBody::left(StreamLog {
@@ -510,6 +588,7 @@ where
                     status: head.status,
                     path: pattern_or_path,
                     method,
+                    version,
                 })
             }
         })))
@@ -554,6 +633,7 @@ pin_project! {
         status: StatusCode,
         path: String,
         method: Method,
+        version: Version,
     }
 
 
@@ -561,7 +641,7 @@ pin_project! {
         fn drop(this: Pin<&mut Self>) {
             // update the metrics for this request at the very end of responding
             this.inner
-                .update_metrics(&this.path, &this.method, this.status, this.clock);
+                .update_metrics(this.version, &this.path, &this.method, this.status, this.clock);
         }
     }
 }
@@ -640,6 +720,67 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
             )
             .unwrap()
         ));
+    }
+
+    #[actix_web::test]
+    async fn middleware_http_version() {
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .endpoint("/metrics")
+            .enable_http_version_label(true)
+            .build()
+            .unwrap();
+
+        let app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/health_check").to(HttpResponse::Ok)),
+        )
+        .await;
+
+        let test_cases = HashMap::from([
+            (Version::HTTP_09, 1),
+            (Version::HTTP_10, 2),
+            (Version::HTTP_11, 5),
+            (Version::HTTP_2, 7),
+            (Version::HTTP_3, 11),
+        ]);
+
+        for (http_version, repeats) in test_cases.iter() {
+            for _ in 0..*repeats {
+                let res = call_service(
+                    &app,
+                    TestRequest::with_uri("/health_check")
+                        .version(*http_version)
+                        .to_request(),
+                )
+                .await;
+                assert!(res.status().is_success());
+                assert_eq!(read_body(res).await, "");
+            }
+        }
+
+        let res = call_service(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        assert_eq!(
+            res.headers().get(CONTENT_TYPE).unwrap(),
+            "text/plain; version=0.0.4; charset=utf-8"
+        );
+        let body = String::from_utf8(read_body(res).await.to_vec()).unwrap();
+        println!("Body: {}", body);
+        for (http_version, repeats) in test_cases {
+            assert!(&body.contains(
+                &String::from_utf8(web::Bytes::from(
+                    format!(
+                        "actix_web_prom_http_requests_duration_seconds_bucket{{endpoint=\"/health_check\",method=\"GET\",status=\"200\",version=\"{}\",le=\"0.005\"}} {}
+", PrometheusMetrics::http_version_label(http_version), repeats)
+            ).to_vec()).unwrap()));
+
+            assert!(&body.contains(
+                &String::from_utf8(web::Bytes::from(
+                    format!(
+                        "actix_web_prom_http_requests_total{{endpoint=\"/health_check\",method=\"GET\",status=\"200\",version=\"{}\"}} {}
+", PrometheusMetrics::http_version_label(http_version), repeats)
+            ).to_vec()).unwrap()));
+        }
     }
 
     #[actix_web::test]
@@ -917,13 +1058,11 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
         // so we should get only 10 on test counter
         let response =
             call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(response.to_vec()).unwrap();
 
         let ten_test_counter =
             "# HELP test_counter test counter help\n# TYPE test_counter counter\ntest_counter 10\n";
-        assert_eq!(
-            String::from_utf8(response.to_vec()).unwrap(),
-            ten_test_counter
-        );
+        assert!(body.contains(ten_test_counter));
 
         // all http counters are 1 because this is the second http request,
         // plus 10 on test counter
