@@ -466,17 +466,6 @@ impl ActixMetricsConfiguration {
         }
     }
 
-    /// Create new metrics configuration with given input
-    pub fn new(
-        http_requests_total: ActixMetric,
-        http_requests_duration_seconds: ActixMetric,
-    ) -> ActixMetricsConfiguration {
-        ActixMetricsConfiguration {
-            http_requests_total,
-            http_requests_duration_seconds,
-        }
-    }
-
     /// Set configs for http_requests_total metric
     pub fn http_requests_total(mut self, value: ActixMetric) -> Self {
         self.http_requests_total = value;
@@ -1342,10 +1331,9 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
 
     #[actix_web::test]
     async fn middleware_metrics_configuration() {
-        let metrics_config = ActixMetricsConfiguration::new(
-            ActixMetric::new("my_http_requests_total", vec!["path", "method", "status"]),
-            ActixMetric::new("my_http_request_duration", vec!["path", "method", "status"]),
-        );
+        let metrics_config = ActixMetricsConfiguration::default()
+            .http_requests_duration_seconds(ActixMetric::new("my_http_request_duration", vec!["path", "method", "status"]))
+            .http_requests_total(ActixMetric::new("my_http_requests_total", vec!["path", "method", "status"]));
 
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/metrics")
