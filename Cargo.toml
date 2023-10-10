@@ -13,6 +13,7 @@ readme = "README.md"
 exclude = [".gitignore", ".github/", "README.tpl", "examples/"]
 
 [dependencies]
+strfmt = { version = "0.2.4" }
 actix-web = { version = "4.0", default-features = false, features = ["macros"] }
 futures-core = "0.3"
 pin-project-lite = "0.2"
@@ -21,4 +22,3 @@ regex = "^1.4"
 
 [features]
 process = ["prometheus/process"]
-strfmt = { version = "0.2.4" }

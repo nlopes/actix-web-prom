@@ -582,10 +582,8 @@ where
                     params.insert(key.to_string(), format!("{{{}}}", key));
                 }
 
-                let mixed_cardinality_pattern = strfmt(&base_pattern, &params);
-
-                Some(match mixed_cardinality_pattern {
-                    Ok(res) => res,
+                Some(match strfmt(&base_pattern, &params) {
+                    Ok(mixed_cardinality_pattern) => mixed_cardinality_pattern,
                     Err(_) => {
                         // may be we need to log something to warn that we didn't managed to build the pattern?
                         base_pattern
@@ -713,7 +711,8 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
 mod tests {
     use super::*;
     use actix_web::test::{call_and_read_body, call_service, init_service, read_body, TestRequest};
-    use actix_web::{web, App, HttpResponse, Resource, Scope};
+    use actix_web::{web, App, HttpResponse, Resource, Scope, HttpMessage};
+    use actix_web::dev::Service;
 
     use prometheus::{Counter, Opts};
 
@@ -911,6 +910,57 @@ actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/resource/{id}\"
                     "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
 # TYPE actix_web_prom_http_requests_total counter
 actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",status=\"200\"} 1
+"
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
+    }
+
+    #[actix_web::test]
+    async fn middleware_with_params_cardinality() {
+        // we want to keep metrics label on the "cheap param" but not on the "expensive" param
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .endpoint("/metrics")
+            .build()
+            .unwrap();
+
+        let app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(
+                    web::resource("/resource/{cheap_param}/{expensive_param}")
+                        .wrap_fn(|req, srv| {
+                            req.extensions_mut().insert::<MetricsConfig>(
+                                MetricsConfig { cardinality_keep_params: vec!["cheap_param".to_string()] }
+                            );
+                            srv.call(req)
+                        })
+                        .to(HttpResponse::Ok)
+                ),
+        )
+        .await;
+
+        let res = call_service(&app, TestRequest::with_uri("/resource/foo/12345").to_request()).await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(res.to_vec()).unwrap();
+        assert!(&body.contains(
+            &String::from_utf8(web::Bytes::from(
+                "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests
+# TYPE actix_web_prom_http_requests_duration_seconds histogram
+actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/resource/foo/{expensive_param}\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
+"
+        ).to_vec()).unwrap()));
+        assert!(body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
+# TYPE actix_web_prom_http_requests_total counter
+actix_web_prom_http_requests_total{endpoint=\"/resource/foo/{expensive_param}\",method=\"GET\",status=\"200\"} 1
 "
                 )
                 .to_vec()
