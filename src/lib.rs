@@ -464,21 +464,26 @@ impl PrometheusMetrics {
     fn update_metrics(
         &self,
         http_version: Version,
-        path: &str,
+        pattern: &str,
+        fallback_pattern: &str,
         method: &Method,
         status: StatusCode,
         clock: Instant,
     ) {
-        if self.exclude.contains(path)
-            || self.exclude_regex.is_match(path)
+        if self.exclude.contains(pattern)
+            || self.exclude_regex.is_match(pattern)
             || self.exclude_status.contains(&status)
         {
             return;
         }
 
+        let final_pattern = 
+            if fallback_pattern != pattern && (status == 404 || status == 405) { fallback_pattern }
+            else { pattern };
+
         let label_values = [
             Self::http_version_label(http_version),
-            path,
+            final_pattern,
             method.as_str(),
             status.as_str(),
         ];
@@ -569,9 +574,14 @@ where
             None => vec![]
         };
 
-        let pattern_or_path = req
-            .match_pattern()
-            .and_then(|base_pattern| {
+        let full_pattern = req.match_pattern();
+        let path = req.path().to_string();
+        let fallback_pattern = full_pattern.clone().unwrap_or(path.clone());
+        
+        // mixed_pattern is the final path used as label value in metrics
+        let pattern = match full_pattern {
+            None => path.clone(),
+            Some(full_pattern) => {
                 let mut params: HashMap<String, String> = HashMap::new();
 
                 for (key, val) in req.match_info().iter() {
@@ -582,17 +592,16 @@ where
                     params.insert(key.to_string(), format!("{{{}}}", key));
                 }
 
-                Some(match strfmt(&base_pattern, &params) {
+                match strfmt(&full_pattern, &params) {
                     Ok(mixed_cardinality_pattern) => mixed_cardinality_pattern,
                     Err(_) => {
                         // may be we need to log something to warn that we didn't managed to build the pattern?
-                        base_pattern
+                        full_pattern
                     }
-                })
-            })
-            .unwrap_or_else(|| req.path().to_string());
+                }
+            }
+        };
 
-        let path = req.path().to_string();
         let inner = this.inner.clone();
 
         Poll::Ready(Ok(res.map_body(move |head, body| {
@@ -613,7 +622,8 @@ where
                     clock: time,
                     inner,
                     status: head.status,
-                    path: pattern_or_path,
+                    pattern,
+                    fallback_pattern,
                     method,
                     version,
                 })
@@ -624,7 +634,8 @@ where
                     clock: time,
                     inner,
                     status: head.status,
-                    path: pattern_or_path,
+                    pattern,
+                    fallback_pattern,
                     method,
                     version,
                 })
@@ -669,7 +680,8 @@ pin_project! {
         clock: Instant,
         inner: Arc<PrometheusMetrics>,
         status: StatusCode,
-        path: String,
+        pattern: String,
+        fallback_pattern: String,
         method: Method,
         version: Version,
     }
@@ -679,7 +691,7 @@ pin_project! {
         fn drop(this: Pin<&mut Self>) {
             // update the metrics for this request at the very end of responding
             this.inner
-                .update_metrics(this.version, &this.path, &this.method, this.status, this.clock);
+                .update_metrics(this.version, &this.pattern, &this.fallback_pattern, &this.method, this.status, this.clock);
         }
     }
 }
@@ -919,7 +931,7 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
     }
 
     #[actix_web::test]
-    async fn middleware_with_params_cardinality() {
+    async fn middleware_with_mixed_params_cardinality() {
         // we want to keep metrics label on the "cheap param" but not on the "expensive" param
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/metrics")
@@ -930,38 +942,58 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
             App::new()
                 .wrap(prometheus)
                 .service(
-                    web::resource("/resource/{cheap_param}/{expensive_param}")
+                    web::resource("/resource/{cheap}/{expensive}")
                         .wrap_fn(|req, srv| {
                             req.extensions_mut().insert::<MetricsConfig>(
-                                MetricsConfig { cardinality_keep_params: vec!["cheap_param".to_string()] }
+                                MetricsConfig { cardinality_keep_params: vec!["cheap".to_string()] }
                             );
                             srv.call(req)
                         })
-                        .to(HttpResponse::Ok)
+                        .to(|path: web::Path<(String, String)>| async {
+                            let (cheap, _expensive) = path.into_inner();
+                            if !["foo", "bar"].map(|x| x.to_string()).contains(&cheap) {
+                                return HttpResponse::NotFound().finish()
+                            }
+                            HttpResponse::Ok().finish()
+                        })
                 ),
         )
         .await;
 
+        // first probe to check basic facts
         let res = call_service(&app, TestRequest::with_uri("/resource/foo/12345").to_request()).await;
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
         let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
+        println!("Body: {}", body);
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
-                "# HELP actix_web_prom_http_requests_duration_seconds HTTP request duration in seconds for all requests
-# TYPE actix_web_prom_http_requests_duration_seconds histogram
-actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/resource/foo/{expensive_param}\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
-"
+                "actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/resource/foo/{expensive}\",method=\"GET\",status=\"200\",le=\"0.005\"} 1"
         ).to_vec()).unwrap()));
         assert!(body.contains(
             &String::from_utf8(
                 web::Bytes::from(
-                    "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
-# TYPE actix_web_prom_http_requests_total counter
-actix_web_prom_http_requests_total{endpoint=\"/resource/foo/{expensive_param}\",method=\"GET\",status=\"200\"} 1
-"
+                    "actix_web_prom_http_requests_total{endpoint=\"/resource/foo/{expensive}\",method=\"GET\",status=\"200\"} 1"
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
+
+        // second probe to test 404 behavior
+        let res = call_service(&app, TestRequest::with_uri("/resource/invalid/92945").to_request()).await;
+        assert!(res.status() == 404);
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(res.to_vec()).unwrap();
+        println!("Body: {}", body);
+        assert!(body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "actix_web_prom_http_requests_total{endpoint=\"/resource/{cheap}/{expensive}\",method=\"GET\",status=\"404\"} 1"
                 )
                 .to_vec()
             )

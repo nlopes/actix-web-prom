@@ -30,17 +30,26 @@ async fn main() -> std::io::Result<()> {
             .wrap(prometheus.clone())
             .service(web::resource("/health").to(health))
             .service(
-                web::resource("/services/{service_id}")
+                web::resource("/mixed/{cheap}/{expensive}")
                     .name("Services endpoint")
                     .wrap_fn(|req, srv| {
                         // example of a route where we want to keep the details of `service_id` param in the metrics
                         // we use a middleware to specify that `service_id` param values are kept in the labels
                         req.extensions_mut().insert::<MetricsConfig>(
-                            MetricsConfig { cardinality_keep_params: vec!["service_id".to_string()] }
+                            MetricsConfig { cardinality_keep_params: vec!["cheap".to_string()] }
                         );
                         srv.call(req)
                     })
-                    .route(web::get().to(get_posts_details))
+                    .route(
+                        web::get()
+                        .to(|path: web::Path<(String, String)>| async {
+                            let (cheap_param, _expensive) = path.into_inner();
+                            if !["foo", "bar"].map(|x| x.to_string()).contains(&cheap_param) {
+                                return HttpResponse::NotFound().finish()
+                            }
+                            HttpResponse::Ok().finish()
+                        })
+                    )
             )
             .service(
                 // example of a route where we want to ignore the cardinality of `post_id` in the metrics
