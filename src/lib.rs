@@ -360,10 +360,13 @@ impl PrometheusMetricsBuilder {
 
     /// Instantiate PrometheusMetrics struct
     pub fn build(self) -> Result<PrometheusMetrics, Box<dyn std::error::Error + Send + Sync>> {
+
+        let labels_vec = self.metrics_configuration.labels.clone().to_vec();
+        let labels = &labels_vec.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+
         let http_requests_total_opts = Opts::new(
             self.metrics_configuration
-                .http_requests_total
-                .name
+                .http_requests_total_name
                 .to_owned(),
             "Total number of HTTP requests",
         )
@@ -372,19 +375,12 @@ impl PrometheusMetricsBuilder {
 
         let http_requests_total = IntCounterVec::new(
             http_requests_total_opts,
-            &self
-                .metrics_configuration
-                .http_requests_total
-                .labels
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<&str>>(),
+            labels
         )?;
 
         let http_requests_duration_seconds_opts = HistogramOpts::new(
             self.metrics_configuration
-                .http_requests_duration_seconds
-                .name
+                .http_requests_duration_seconds_name
                 .to_owned(),
             "HTTP request duration in seconds for all requests",
         )
@@ -394,19 +390,18 @@ impl PrometheusMetricsBuilder {
 
         let http_requests_duration_seconds = HistogramVec::new(
             http_requests_duration_seconds_opts,
-            &self
-                .metrics_configuration
-                .http_requests_duration_seconds
-                .labels
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<&str>>(),
+            labels
         )?;
 
         self.registry
             .register(Box::new(http_requests_total.clone()))?;
         self.registry
             .register(Box::new(http_requests_duration_seconds.clone()))?;
+
+        let enabled_http_version_label = match self.metrics_configuration.labels.version {
+            Some(_) => true,
+            None => false
+        };
 
         Ok(PrometheusMetrics {
             http_requests_total,
@@ -418,63 +413,103 @@ impl PrometheusMetricsBuilder {
             exclude: self.exclude,
             exclude_regex: self.exclude_regex,
             exclude_status: self.exclude_status,
-            enable_http_version_label: self.enable_http_version_label,
+            enable_http_version_label: enabled_http_version_label,
         })
     }
 }
 
-#[derive(Debug)]
-/// Configuration for a single metric
-///
-/// Allows configuring name and labels set for the metric
-pub struct ActixMetric {
-    name: String,
-    labels: Vec<String>,
+
+#[derive(Debug, Clone)]
+///Configurations for the labels used in metrics
+pub struct LabelsConfiguration {
+    endpoint: String,
+    method: String,
+    status: String,
+    version: Option<String>,
 }
 
-impl ActixMetric {
-    /// Create a new metric configuration
-    pub fn new(name: &str, labels: Vec<&str>) -> ActixMetric {
-        ActixMetric {
-            name: name.to_string(),
-            labels: labels.into_iter().map(|s| s.to_string()).collect(),
+impl LabelsConfiguration {
+    fn default() -> LabelsConfiguration {
+        LabelsConfiguration {
+            endpoint: String::from("endpoint"), 
+            method: String::from("method"),
+            status: String::from("status"),
+            version: None,
         }
+    }
+
+    fn to_vec(self) -> Vec<String> {
+        let mut labels = vec![self.endpoint, self.method, self.status];
+        if self.version.is_some() {
+            labels.push(self.version.unwrap())
+        }
+        labels
+    }
+
+    /// set http method label
+    pub fn method(mut self, name: &str) -> Self {
+        self.method = name.to_owned();
+        self
+    }
+
+    /// set http endpoint label
+    pub fn endpoint(mut self, name: &str) -> Self {
+        self.endpoint = name.to_owned();
+        self
+    }
+
+    /// set http status label
+    pub fn status(mut self, name: &str) -> Self {
+        self.status = name.to_owned();
+        self
+    }
+
+    /// set http version label
+    pub fn version(mut self, name: &str) -> Self {
+        self.version = Some(name.to_owned());
+        self
     }
 }
 
-#[derive(Debug)]
+
+#[derive(Debug, Clone)]
 /// Configuration for the collected metrics
 ///
 /// Stores individual metric configuration objects
 pub struct ActixMetricsConfiguration {
-    http_requests_total: ActixMetric,
-    http_requests_duration_seconds: ActixMetric,
+    http_requests_total_name: String,
+    http_requests_duration_seconds_name: String,
+    labels: LabelsConfiguration
 }
 
 impl ActixMetricsConfiguration {
     /// Create the default metrics configuration
     fn default() -> ActixMetricsConfiguration {
         ActixMetricsConfiguration {
-            http_requests_total: ActixMetric::new(
-                "http_requests_total",
-                vec!["endpoint", "method", "status"],
-            ),
-            http_requests_duration_seconds: ActixMetric::new(
-                "http_requests_duration_seconds",
-                vec!["endpoint", "method", "status"],
-            ),
+            http_requests_total_name: String::from("http_requests_total"),
+            http_requests_duration_seconds_name: String::from("http_requests_duration_seconds"),
+            labels: LabelsConfiguration::default(),
         }
     }
 
-    /// Set configs for http_requests_total metric
-    pub fn http_requests_total(mut self, value: ActixMetric) -> Self {
-        self.http_requests_total = value;
+    /// Create the default metrics configuration with custom labels configuration
+    pub fn default_with_custom_labels(labels: LabelsConfiguration) -> ActixMetricsConfiguration {
+        ActixMetricsConfiguration {
+            http_requests_total_name: String::from("http_requests_total"),
+            http_requests_duration_seconds_name: String::from("http_requests_duration_seconds"),
+            labels: labels,
+        }
+    }
+
+    /// Set name for http_requests_total metric
+    pub fn http_requests_total_name(mut self, name: &str) -> Self {
+        self.http_requests_total_name = name.to_owned();
         self
     }
 
-    /// Set configs for http_requests_duration_seconds metric
-    pub fn http_requests_duration_seconds(mut self, value: ActixMetric) -> Self {
-        self.http_requests_duration_seconds = value;
+    /// Set name for http_requests_duration_seconds metric
+    pub fn http_requests_duration_seconds_name(mut self, name: &str)-> Self {
+        self.http_requests_duration_seconds_name = name.to_owned();
         self
     }
 }
@@ -560,15 +595,15 @@ impl PrometheusMetrics {
         };
 
         let label_values = [
-            Self::http_version_label(http_version),
             final_pattern,
             method.as_str(),
             status.as_str(),
+            Self::http_version_label(http_version),
         ];
         let label_values = if self.enable_http_version_label {
             &label_values[..]
         } else {
-            &label_values[1..]
+            &label_values[..3]
         };
 
         let elapsed = clock.elapsed();
@@ -857,7 +892,11 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
     async fn middleware_http_version() {
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/metrics")
-            .enable_http_version_label(true)
+            .metrics_configuration(
+                ActixMetricsConfiguration::default_with_custom_labels(
+                    LabelsConfiguration::default().version("version")
+                )
+            )
             .build()
             .unwrap();
 
@@ -1332,8 +1371,8 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
     #[actix_web::test]
     async fn middleware_metrics_configuration() {
         let metrics_config = ActixMetricsConfiguration::default()
-            .http_requests_duration_seconds(ActixMetric::new("my_http_request_duration", vec!["path", "method", "status"]))
-            .http_requests_total(ActixMetric::new("my_http_requests_total", vec!["path", "method", "status"]));
+            .http_requests_duration_seconds_name("my_http_request_duration")
+            .http_requests_total_name("my_http_requests_total");
 
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/metrics")
@@ -1358,7 +1397,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
             &String::from_utf8(web::Bytes::from(
                 "# HELP actix_web_prom_my_http_request_duration HTTP request duration in seconds for all requests
 # TYPE actix_web_prom_my_http_request_duration histogram
-actix_web_prom_my_http_request_duration_bucket{method=\"GET\",path=\"/health_check\",status=\"200\",le=\"0.005\"} 1
+actix_web_prom_my_http_request_duration_bucket{endpoint=\"/health_check\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
 "
         ).to_vec()).unwrap()));
         assert!(body.contains(
@@ -1366,7 +1405,7 @@ actix_web_prom_my_http_request_duration_bucket{method=\"GET\",path=\"/health_che
                 web::Bytes::from(
                     "# HELP actix_web_prom_my_http_requests_total Total number of HTTP requests
 # TYPE actix_web_prom_my_http_requests_total counter
-actix_web_prom_my_http_requests_total{method=\"GET\",path=\"/health_check\",status=\"200\"} 1
+actix_web_prom_my_http_requests_total{endpoint=\"/health_check\",method=\"GET\",status=\"200\"} 1
 "
                 )
                 .to_vec()
