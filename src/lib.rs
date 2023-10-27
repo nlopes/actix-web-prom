@@ -492,13 +492,10 @@ impl ActixMetricsConfiguration {
         }
     }
 
-    /// Create the default metrics configuration with custom labels configuration
-    pub fn default_with_custom_labels(labels: LabelsConfiguration) -> ActixMetricsConfiguration {
-        ActixMetricsConfiguration {
-            http_requests_total_name: String::from("http_requests_total"),
-            http_requests_duration_seconds_name: String::from("http_requests_duration_seconds"),
-            labels: labels,
-        }
+    /// Set the labels collected for the metrics
+    pub fn labels(mut self, labels: LabelsConfiguration) -> Self {
+        self.labels = labels;
+        self
     }
 
     /// Set name for http_requests_total metric
@@ -893,7 +890,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/metrics")
             .metrics_configuration(
-                ActixMetricsConfiguration::default_with_custom_labels(
+                ActixMetricsConfiguration::default().labels(
                     LabelsConfiguration::default().version("version")
                 )
             )
