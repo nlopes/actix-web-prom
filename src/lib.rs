@@ -398,11 +398,6 @@ impl PrometheusMetricsBuilder {
         self.registry
             .register(Box::new(http_requests_duration_seconds.clone()))?;
 
-        let enabled_http_version_label = match self.metrics_configuration.labels.version {
-            Some(_) => true,
-            None => false
-        };
-
         Ok(PrometheusMetrics {
             http_requests_total,
             http_requests_duration_seconds,
@@ -413,7 +408,7 @@ impl PrometheusMetricsBuilder {
             exclude: self.exclude,
             exclude_regex: self.exclude_regex,
             exclude_status: self.exclude_status,
-            enable_http_version_label: enabled_http_version_label,
+            enable_http_version_label: self.metrics_configuration.labels.version.is_some(),
         })
     }
 }
@@ -440,9 +435,9 @@ impl LabelsConfiguration {
 
     fn to_vec(self) -> Vec<String> {
         let mut labels = vec![self.endpoint, self.method, self.status];
-        if self.version.is_some() {
-            labels.push(self.version.unwrap())
-        }
+        if let Some(version) = self.version {
+            labels.push(version);
+        }        
         labels
     }
 
