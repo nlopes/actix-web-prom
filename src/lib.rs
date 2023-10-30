@@ -551,9 +551,19 @@ where
         let req = res.request();
         let method = req.method().clone();
         let version = req.version();
-        let pattern_or_path = req
-            .match_pattern()
-            .unwrap_or_else(|| req.path().to_string());
+
+        let resource_pattern = {
+            let path = req
+                .match_pattern()
+                .unwrap_or_else(|| req.path().to_string());
+
+            if req.resource_map().has_resource(&path) {
+                path
+            } else {
+                "*".to_string()
+            }
+        };
+
         let path = req.path().to_string();
         let inner = this.inner.clone();
 
@@ -575,7 +585,7 @@ where
                     clock: time,
                     inner,
                     status: head.status,
-                    path: pattern_or_path,
+                    path,
                     method,
                     version,
                 })
@@ -586,7 +596,7 @@ where
                     clock: time,
                     inner,
                     status: head.status,
-                    path: pattern_or_path,
+                    path: resource_pattern,
                     method,
                     version,
                 })
