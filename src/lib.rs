@@ -234,6 +234,7 @@ fn main() -> std::io::Result<()> {
 */
 #![deny(missing_docs)]
 
+use log::warn;
 use std::collections::{HashMap, HashSet};
 use std::future::{ready, Future, Ready};
 use std::marker::PhantomData;
@@ -464,22 +465,23 @@ impl PrometheusMetrics {
     fn update_metrics(
         &self,
         http_version: Version,
-        pattern: &str,
+        mixed_pattern: &str,
         fallback_pattern: &str,
         method: &Method,
         status: StatusCode,
         clock: Instant,
     ) {
-        if self.exclude.contains(pattern)
-            || self.exclude_regex.is_match(pattern)
+        if self.exclude.contains(mixed_pattern)
+            || self.exclude_regex.is_match(mixed_pattern)
             || self.exclude_status.contains(&status)
         {
             return;
         }
 
+        // do not record mixed patterns that were considered invalid by the server
         let final_pattern = 
-            if fallback_pattern != pattern && (status == 404 || status == 405) { fallback_pattern }
-            else { pattern };
+            if fallback_pattern != mixed_pattern && (status == 404 || status == 405) { mixed_pattern }
+            else { mixed_pattern };
 
         let label_values = [
             Self::http_version_label(http_version),
@@ -568,6 +570,7 @@ where
         let method = req.method().clone();
         let version = req.version();
 
+        // get metrics config for this specific route
         // piece of code to allow for more cardinality 
         let params_keep_path_cardinality = match req.extensions_mut().get::<MetricsConfig>() {
             Some(config) => config.cardinality_keep_params.clone(),
@@ -579,7 +582,7 @@ where
         let fallback_pattern = full_pattern.clone().unwrap_or(path.clone());
         
         // mixed_pattern is the final path used as label value in metrics
-        let pattern = match full_pattern {
+        let mixed_pattern = match full_pattern {
             None => path.clone(),
             Some(full_pattern) => {
                 let mut params: HashMap<String, String> = HashMap::new();
@@ -595,7 +598,7 @@ where
                 match strfmt(&full_pattern, &params) {
                     Ok(mixed_cardinality_pattern) => mixed_cardinality_pattern,
                     Err(_) => {
-                        // may be we need to log something to warn that we didn't managed to build the pattern?
+                        warn!("Cannot build mixed cardinality pattern {:?}", full_pattern);
                         full_pattern
                     }
                 }
@@ -622,7 +625,7 @@ where
                     clock: time,
                     inner,
                     status: head.status,
-                    pattern,
+                    mixed_pattern,
                     fallback_pattern,
                     method,
                     version,
@@ -634,7 +637,7 @@ where
                     clock: time,
                     inner,
                     status: head.status,
-                    pattern,
+                    mixed_pattern,
                     fallback_pattern,
                     method,
                     version,
@@ -680,7 +683,8 @@ pin_project! {
         clock: Instant,
         inner: Arc<PrometheusMetrics>,
         status: StatusCode,
-        pattern: String,
+        // a route pattern with some params not-filled and some params filled in by user-defined
+        mixed_pattern: String,
         fallback_pattern: String,
         method: Method,
         version: Version,
@@ -691,7 +695,7 @@ pin_project! {
         fn drop(this: Pin<&mut Self>) {
             // update the metrics for this request at the very end of responding
             this.inner
-                .update_metrics(this.version, &this.pattern, &this.fallback_pattern, &this.method, this.status, this.clock);
+                .update_metrics(this.version, &this.mixed_pattern, &this.fallback_pattern, &this.method, this.status, this.clock);
         }
     }
 }

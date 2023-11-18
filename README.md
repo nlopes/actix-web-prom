@@ -209,7 +209,7 @@ fn main() -> std::io::Result<()> {
 ### Configurable routes pattern cardinality
 
 Let's say you have on your app a route to fetch posts by language and by slug `GET /posts/{language}/{slug}`.
-By default, actix-web-prom will provide metrics for the whole route with the label `endpoint` set to the pattern `/posts/{locale}/{slug}`.
+By default, actix-web-prom will provide metrics for the whole route with the label `endpoint` set to the pattern `/posts/{language}/{slug}`.
 This is great but you cannot differentiate metrics across languages (as there is only a limited set of them).
 Actix-web-prom can be configured to allow for more cardinality on some route params.
 
