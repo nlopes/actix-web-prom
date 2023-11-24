@@ -360,7 +360,6 @@ impl PrometheusMetricsBuilder {
 
     /// Instantiate PrometheusMetrics struct
     pub fn build(self) -> Result<PrometheusMetrics, Box<dyn std::error::Error + Send + Sync>> {
-
         let labels_vec = self.metrics_configuration.labels.clone().to_vec();
         let labels = &labels_vec.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
 
@@ -373,10 +372,7 @@ impl PrometheusMetricsBuilder {
         .namespace(&self.namespace)
         .const_labels(self.const_labels.clone());
 
-        let http_requests_total = IntCounterVec::new(
-            http_requests_total_opts,
-            labels
-        )?;
+        let http_requests_total = IntCounterVec::new(http_requests_total_opts, labels)?;
 
         let http_requests_duration_seconds_opts = HistogramOpts::new(
             self.metrics_configuration
@@ -388,10 +384,8 @@ impl PrometheusMetricsBuilder {
         .buckets(self.buckets.to_vec())
         .const_labels(self.const_labels.clone());
 
-        let http_requests_duration_seconds = HistogramVec::new(
-            http_requests_duration_seconds_opts,
-            labels
-        )?;
+        let http_requests_duration_seconds =
+            HistogramVec::new(http_requests_duration_seconds_opts, labels)?;
 
         self.registry
             .register(Box::new(http_requests_total.clone()))?;
@@ -413,7 +407,6 @@ impl PrometheusMetricsBuilder {
     }
 }
 
-
 #[derive(Debug, Clone)]
 ///Configurations for the labels used in metrics
 pub struct LabelsConfiguration {
@@ -426,7 +419,7 @@ pub struct LabelsConfiguration {
 impl LabelsConfiguration {
     fn default() -> LabelsConfiguration {
         LabelsConfiguration {
-            endpoint: String::from("endpoint"), 
+            endpoint: String::from("endpoint"),
             method: String::from("method"),
             status: String::from("status"),
             version: None,
@@ -437,7 +430,7 @@ impl LabelsConfiguration {
         let mut labels = vec![self.endpoint, self.method, self.status];
         if let Some(version) = self.version {
             labels.push(version);
-        }        
+        }
         labels
     }
 
@@ -466,7 +459,6 @@ impl LabelsConfiguration {
     }
 }
 
-
 #[derive(Debug, Clone)]
 /// Configuration for the collected metrics
 ///
@@ -474,7 +466,7 @@ impl LabelsConfiguration {
 pub struct ActixMetricsConfiguration {
     http_requests_total_name: String,
     http_requests_duration_seconds_name: String,
-    labels: LabelsConfiguration
+    labels: LabelsConfiguration,
 }
 
 impl ActixMetricsConfiguration {
@@ -500,7 +492,7 @@ impl ActixMetricsConfiguration {
     }
 
     /// Set name for http_requests_duration_seconds metric
-    pub fn http_requests_duration_seconds_name(mut self, name: &str)-> Self {
+    pub fn http_requests_duration_seconds_name(mut self, name: &str) -> Self {
         self.http_requests_duration_seconds_name = name.to_owned();
         self
     }
@@ -885,9 +877,8 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
             .endpoint("/metrics")
             .metrics_configuration(
-                ActixMetricsConfiguration::default().labels(
-                    LabelsConfiguration::default().version("version")
-                )
+                ActixMetricsConfiguration::default()
+                    .labels(LabelsConfiguration::default().version("version")),
             )
             .build()
             .unwrap();
