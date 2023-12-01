@@ -251,8 +251,7 @@ use actix_web::{
         Method, StatusCode, Version,
     },
     web::Bytes,
-    HttpMessage,
-    Error,
+    Error, HttpMessage,
 };
 use futures_core::ready;
 use pin_project_lite::pin_project;
@@ -268,9 +267,8 @@ use strfmt::strfmt;
 #[derive(Debug, Clone)]
 pub struct MetricsConfig {
     /// list of params where the cardinality matters
-    pub cardinality_keep_params: Vec<String>
+    pub cardinality_keep_params: Vec<String>,
 }
-
 
 #[derive(Debug)]
 /// Builder to create new PrometheusMetrics struct.HistogramVec
@@ -479,9 +477,12 @@ impl PrometheusMetrics {
         }
 
         // do not record mixed patterns that were considered invalid by the server
-        let final_pattern = 
-            if fallback_pattern != mixed_pattern && (status == 404 || status == 405) { mixed_pattern }
-            else { mixed_pattern };
+        let final_pattern = if fallback_pattern != mixed_pattern && (status == 404 || status == 405)
+        {
+            fallback_pattern
+        } else {
+            mixed_pattern
+        };
 
         let label_values = [
             Self::http_version_label(http_version),
@@ -571,16 +572,16 @@ where
         let version = req.version();
 
         // get metrics config for this specific route
-        // piece of code to allow for more cardinality 
+        // piece of code to allow for more cardinality
         let params_keep_path_cardinality = match req.extensions_mut().get::<MetricsConfig>() {
             Some(config) => config.cardinality_keep_params.clone(),
-            None => vec![]
+            None => vec![],
         };
 
         let full_pattern = req.match_pattern();
         let path = req.path().to_string();
         let fallback_pattern = full_pattern.clone().unwrap_or(path.clone());
-        
+
         // mixed_pattern is the final path used as label value in metrics
         let mixed_pattern = match full_pattern {
             None => path.clone(),
@@ -726,9 +727,9 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::test::{call_and_read_body, call_service, init_service, read_body, TestRequest};
-    use actix_web::{web, App, HttpResponse, Resource, Scope, HttpMessage};
     use actix_web::dev::Service;
+    use actix_web::test::{call_and_read_body, call_service, init_service, read_body, TestRequest};
+    use actix_web::{web, App, HttpMessage, HttpResponse, Resource, Scope};
 
     use prometheus::{Counter, Opts};
 
@@ -943,29 +944,31 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
             .unwrap();
 
         let app = init_service(
-            App::new()
-                .wrap(prometheus)
-                .service(
-                    web::resource("/resource/{cheap}/{expensive}")
-                        .wrap_fn(|req, srv| {
-                            req.extensions_mut().insert::<MetricsConfig>(
-                                MetricsConfig { cardinality_keep_params: vec!["cheap".to_string()] }
-                            );
-                            srv.call(req)
-                        })
-                        .to(|path: web::Path<(String, String)>| async {
-                            let (cheap, _expensive) = path.into_inner();
-                            if !["foo", "bar"].map(|x| x.to_string()).contains(&cheap) {
-                                return HttpResponse::NotFound().finish()
-                            }
-                            HttpResponse::Ok().finish()
-                        })
-                ),
+            App::new().wrap(prometheus).service(
+                web::resource("/resource/{cheap}/{expensive}")
+                    .wrap_fn(|req, srv| {
+                        req.extensions_mut().insert::<MetricsConfig>(MetricsConfig {
+                            cardinality_keep_params: vec!["cheap".to_string()],
+                        });
+                        srv.call(req)
+                    })
+                    .to(|path: web::Path<(String, String)>| async {
+                        let (cheap, _expensive) = path.into_inner();
+                        if !["foo", "bar"].map(|x| x.to_string()).contains(&cheap) {
+                            return HttpResponse::NotFound().finish();
+                        }
+                        HttpResponse::Ok().finish()
+                    }),
+            ),
         )
         .await;
 
         // first probe to check basic facts
-        let res = call_service(&app, TestRequest::with_uri("/resource/foo/12345").to_request()).await;
+        let res = call_service(
+            &app,
+            TestRequest::with_uri("/resource/foo/12345").to_request(),
+        )
+        .await;
         assert!(res.status().is_success());
         assert_eq!(read_body(res).await, "");
 
@@ -987,7 +990,11 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
         ));
 
         // second probe to test 404 behavior
-        let res = call_service(&app, TestRequest::with_uri("/resource/invalid/92945").to_request()).await;
+        let res = call_service(
+            &app,
+            TestRequest::with_uri("/resource/invalid/92945").to_request(),
+        )
+        .await;
         assert!(res.status() == 404);
         assert_eq!(read_body(res).await, "");
 
