@@ -206,3 +206,29 @@ fn main() -> std::io::Result<()> {
 
 ```
 
+### Configurable routes pattern cardinality
+
+Let's say you have on your app a route to fetch posts by language and by slug `GET /posts/{language}/{slug}`.
+By default, actix-web-prom will provide metrics for the whole route with the label `endpoint` set to the pattern `/posts/{language}/{slug}`.
+This is great but you cannot differentiate metrics across languages (as there is only a limited set of them).
+Actix-web-prom can be configured to allow for more cardinality on some route params.
+
+For that you need to add a middleware to pass some [extensions data](https://blog.adamchalmers.com/what-are-extensions/), specifically the `MetricsConfig` struct that contains the list of params you want to keep cardinality on.
+
+```rust
+use actix_web::dev::Service;
+use actix_web::HttpMessage;
+use actix_web_prom::MetricsConfig;
+
+web::resource("/posts/{language}/{slug}")
+    .wrap_fn(|req, srv| {
+        req.extensions_mut().insert::<MetricsConfig>(
+            MetricsConfig { cardinality_keep_params: vec!["language".to_string()] }
+        );
+        srv.call(req)
+    })
+    .route(web::get().to(handler));
+```
+
+See the full example `with_cardinality_on_params.rs`.
+

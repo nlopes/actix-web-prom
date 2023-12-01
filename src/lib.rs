@@ -234,6 +234,7 @@ fn main() -> std::io::Result<()> {
 */
 #![deny(missing_docs)]
 
+use log::warn;
 use std::collections::{HashMap, HashSet};
 use std::future::{ready, Future, Ready};
 use std::marker::PhantomData;
@@ -250,7 +251,7 @@ use actix_web::{
         Method, StatusCode, Version,
     },
     web::Bytes,
-    Error,
+    Error, HttpMessage,
 };
 use futures_core::ready;
 use pin_project_lite::pin_project;
@@ -259,6 +260,15 @@ use prometheus::{
 };
 
 use regex::RegexSet;
+use strfmt::strfmt;
+
+/// MetricsConfig define middleware and config struct to change the behaviour of the metrics
+/// struct to define some particularities
+#[derive(Debug, Clone)]
+pub struct MetricsConfig {
+    /// list of params where the cardinality matters
+    pub cardinality_keep_params: Vec<String>,
+}
 
 #[derive(Debug)]
 /// Builder to create new PrometheusMetrics struct.HistogramVec
@@ -453,21 +463,30 @@ impl PrometheusMetrics {
     fn update_metrics(
         &self,
         http_version: Version,
-        path: &str,
+        mixed_pattern: &str,
+        fallback_pattern: &str,
         method: &Method,
         status: StatusCode,
         clock: Instant,
     ) {
-        if self.exclude.contains(path)
-            || self.exclude_regex.is_match(path)
+        if self.exclude.contains(mixed_pattern)
+            || self.exclude_regex.is_match(mixed_pattern)
             || self.exclude_status.contains(&status)
         {
             return;
         }
 
+        // do not record mixed patterns that were considered invalid by the server
+        let final_pattern = if fallback_pattern != mixed_pattern && (status == 404 || status == 405)
+        {
+            fallback_pattern
+        } else {
+            mixed_pattern
+        };
+
         let label_values = [
             Self::http_version_label(http_version),
-            path,
+            final_pattern,
             method.as_str(),
             status.as_str(),
         ];
@@ -551,10 +570,42 @@ where
         let req = res.request();
         let method = req.method().clone();
         let version = req.version();
-        let pattern_or_path = req
-            .match_pattern()
-            .unwrap_or_else(|| req.path().to_string());
+
+        // get metrics config for this specific route
+        // piece of code to allow for more cardinality
+        let params_keep_path_cardinality = match req.extensions_mut().get::<MetricsConfig>() {
+            Some(config) => config.cardinality_keep_params.clone(),
+            None => vec![],
+        };
+
+        let full_pattern = req.match_pattern();
         let path = req.path().to_string();
+        let fallback_pattern = full_pattern.clone().unwrap_or(path.clone());
+
+        // mixed_pattern is the final path used as label value in metrics
+        let mixed_pattern = match full_pattern {
+            None => path.clone(),
+            Some(full_pattern) => {
+                let mut params: HashMap<String, String> = HashMap::new();
+
+                for (key, val) in req.match_info().iter() {
+                    if params_keep_path_cardinality.contains(&key.to_string()) {
+                        params.insert(key.to_string(), val.to_string());
+                        continue;
+                    }
+                    params.insert(key.to_string(), format!("{{{}}}", key));
+                }
+
+                match strfmt(&full_pattern, &params) {
+                    Ok(mixed_cardinality_pattern) => mixed_cardinality_pattern,
+                    Err(_) => {
+                        warn!("Cannot build mixed cardinality pattern {:?}", full_pattern);
+                        full_pattern
+                    }
+                }
+            }
+        };
+
         let inner = this.inner.clone();
 
         Poll::Ready(Ok(res.map_body(move |head, body| {
@@ -575,7 +626,8 @@ where
                     clock: time,
                     inner,
                     status: head.status,
-                    path: pattern_or_path,
+                    mixed_pattern,
+                    fallback_pattern,
                     method,
                     version,
                 })
@@ -586,7 +638,8 @@ where
                     clock: time,
                     inner,
                     status: head.status,
-                    path: pattern_or_path,
+                    mixed_pattern,
+                    fallback_pattern,
                     method,
                     version,
                 })
@@ -631,7 +684,9 @@ pin_project! {
         clock: Instant,
         inner: Arc<PrometheusMetrics>,
         status: StatusCode,
-        path: String,
+        // a route pattern with some params not-filled and some params filled in by user-defined
+        mixed_pattern: String,
+        fallback_pattern: String,
         method: Method,
         version: Version,
     }
@@ -641,7 +696,7 @@ pin_project! {
         fn drop(this: Pin<&mut Self>) {
             // update the metrics for this request at the very end of responding
             this.inner
-                .update_metrics(this.version, &this.path, &this.method, this.status, this.clock);
+                .update_metrics(this.version, &this.mixed_pattern, &this.fallback_pattern, &this.method, this.status, this.clock);
         }
     }
 }
@@ -672,8 +727,9 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::dev::Service;
     use actix_web::test::{call_and_read_body, call_service, init_service, read_body, TestRequest};
-    use actix_web::{web, App, HttpResponse, Resource, Scope};
+    use actix_web::{web, App, HttpMessage, HttpResponse, Resource, Scope};
 
     use prometheus::{Counter, Opts};
 
@@ -872,6 +928,83 @@ actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/resource/{id}\"
 # TYPE actix_web_prom_http_requests_total counter
 actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",status=\"200\"} 1
 "
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
+    }
+
+    #[actix_web::test]
+    async fn middleware_with_mixed_params_cardinality() {
+        // we want to keep metrics label on the "cheap param" but not on the "expensive" param
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .endpoint("/metrics")
+            .build()
+            .unwrap();
+
+        let app = init_service(
+            App::new().wrap(prometheus).service(
+                web::resource("/resource/{cheap}/{expensive}")
+                    .wrap_fn(|req, srv| {
+                        req.extensions_mut().insert::<MetricsConfig>(MetricsConfig {
+                            cardinality_keep_params: vec!["cheap".to_string()],
+                        });
+                        srv.call(req)
+                    })
+                    .to(|path: web::Path<(String, String)>| async {
+                        let (cheap, _expensive) = path.into_inner();
+                        if !["foo", "bar"].map(|x| x.to_string()).contains(&cheap) {
+                            return HttpResponse::NotFound().finish();
+                        }
+                        HttpResponse::Ok().finish()
+                    }),
+            ),
+        )
+        .await;
+
+        // first probe to check basic facts
+        let res = call_service(
+            &app,
+            TestRequest::with_uri("/resource/foo/12345").to_request(),
+        )
+        .await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(res.to_vec()).unwrap();
+        println!("Body: {}", body);
+        assert!(&body.contains(
+            &String::from_utf8(web::Bytes::from(
+                "actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/resource/foo/{expensive}\",method=\"GET\",status=\"200\",le=\"0.005\"} 1"
+        ).to_vec()).unwrap()));
+        assert!(body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "actix_web_prom_http_requests_total{endpoint=\"/resource/foo/{expensive}\",method=\"GET\",status=\"200\"} 1"
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
+
+        // second probe to test 404 behavior
+        let res = call_service(
+            &app,
+            TestRequest::with_uri("/resource/invalid/92945").to_request(),
+        )
+        .await;
+        assert!(res.status() == 404);
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(res.to_vec()).unwrap();
+        println!("Body: {}", body);
+        assert!(body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "actix_web_prom_http_requests_total{endpoint=\"/resource/{cheap}/{expensive}\",method=\"GET\",status=\"404\"} 1"
                 )
                 .to_vec()
             )
