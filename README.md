@@ -232,3 +232,20 @@ web::resource("/posts/{language}/{slug}")
 
 See the full example `with_cardinality_on_params.rs`.
 
+### Configurable metric names
+
+If you want to rename the default metrics, you can use `ActixMetricsConfiguration` to do so.
+
+```rust
+use actix_web_prom::{PrometheusMetricsBuilder, ActixMetricsConfiguration};
+
+PrometheusMetricsBuilder::new("api")
+    .endpoint("/metrics")
+    .metrics_configuration(
+        ActixMetricsConfiguration::default()
+        .http_requests_duration_seconds_name("my_http_request_duration"),
+    )
+    .build()
+    .unwrap();
+```
+See full example `confuring_default_metrics.rs`.

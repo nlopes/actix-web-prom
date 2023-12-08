@@ -417,7 +417,7 @@ pub struct LabelsConfiguration {
 }
 
 impl LabelsConfiguration {
-    fn default() -> LabelsConfiguration {
+    pub fn default() -> LabelsConfiguration {
         LabelsConfiguration {
             endpoint: String::from("endpoint"),
             method: String::from("method"),
@@ -471,7 +471,7 @@ pub struct ActixMetricsConfiguration {
 
 impl ActixMetricsConfiguration {
     /// Create the default metrics configuration
-    fn default() -> ActixMetricsConfiguration {
+    pub fn default() -> ActixMetricsConfiguration {
         ActixMetricsConfiguration {
             http_requests_total_name: String::from("http_requests_total"),
             http_requests_duration_seconds_name: String::from("http_requests_duration_seconds"),
