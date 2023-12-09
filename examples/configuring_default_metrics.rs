@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use actix_web::{web, App, HttpResponse, HttpServer};
 use actix_web_prom::{ActixMetricsConfiguration, PrometheusMetricsBuilder};
 

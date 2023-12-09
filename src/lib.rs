@@ -417,6 +417,7 @@ pub struct LabelsConfiguration {
 }
 
 impl LabelsConfiguration {
+    /// construct default LabelsConfiguration
     pub fn default() -> LabelsConfiguration {
         LabelsConfiguration {
             endpoint: String::from("endpoint"),
