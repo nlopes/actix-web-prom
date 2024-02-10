@@ -16,7 +16,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.7.0"
+actix-web-prom = "0.8.0"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -231,6 +231,49 @@ fn main() -> std::io::Result<()> {
 
 ```
 
+## Configurable routes pattern cardinality
+
+Let's say you have on your app a route to fetch posts by language and by slug `GET /posts/{language}/{slug}`.
+By default, actix-web-prom will provide metrics for the whole route with the label `endpoint` set to the pattern `/posts/{language}/{slug}`.
+This is great but you cannot differentiate metrics across languages (as there is only a limited set of them).
+Actix-web-prom can be configured to allow for more cardinality on some route params.
+
+For that you need to add a middleware to pass some [extensions data](https://blog.adamchalmers.com/what-are-extensions/), specifically the `MetricsConfig` struct that contains the list of params you want to keep cardinality on.
+
+```rust
+use actix_web::dev::Service;
+use actix_web::HttpMessage;
+use actix_web_prom::MetricsConfig;
+
+web::resource("/posts/{language}/{slug}")
+    .wrap_fn(|req, srv| {
+        req.extensions_mut().insert::<MetricsConfig>(
+            MetricsConfig { cardinality_keep_params: vec!["language".to_string()] }
+        );
+        srv.call(req)
+    })
+    .route(web::get().to(handler));
+```
+
+See the full example `with_cardinality_on_params.rs`.
+
+## Configurable metric names
+
+If you want to rename the default metrics, you can use `ActixMetricsConfiguration` to do so.
+
+```rust
+use actix_web_prom::{PrometheusMetricsBuilder, ActixMetricsConfiguration};
+
+PrometheusMetricsBuilder::new("api")
+    .endpoint("/metrics")
+    .metrics_configuration(
+        ActixMetricsConfiguration::default()
+        .http_requests_duration_seconds_name("my_http_request_duration"),
+    )
+    .build()
+    .unwrap();
+```
+See full example `configuring_default_metrics.rs`.
 */
 #![deny(missing_docs)]
 

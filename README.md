@@ -22,7 +22,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.7.0"
+actix-web-prom = "0.8.0"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -89,6 +89,31 @@ api_http_requests_duration_seconds_count{endpoint="/metrics",label1="value1",met
 # HELP api_http_requests_total Total number of HTTP requests
 # TYPE api_http_requests_total counter
 api_http_requests_total{endpoint="/metrics",label1="value1",method="GET",status="200"} 1
+```
+
+### Features
+If you enable `process` feature of this crate, default process metrics will also be collected.
+[Default process metrics](https://prometheus.io/docs/instrumenting/writing_clientlibs/#process-metrics)
+
+```shell
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 0.22
+# HELP process_max_fds Maximum number of open file descriptors.
+# TYPE process_max_fds gauge
+process_max_fds 1048576
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 78
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 17526784
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1628105774.92
+# HELP process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE process_virtual_memory_bytes gauge
+process_virtual_memory_bytes 1893163008
 ```
 
 ### Custom metrics
@@ -248,4 +273,4 @@ PrometheusMetricsBuilder::new("api")
     .build()
     .unwrap();
 ```
-See full example `confuring_default_metrics.rs`.
+See full example `configuring_default_metrics.rs`.

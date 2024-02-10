@@ -1,6 +1,6 @@
 [package]
 name = "actix-web-prom"
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Norberto Lopes <nlopes.ml@gmail.com>"]
 edition = "2021"
 description = "Actix Web middleware to expose Prometheus metrics"

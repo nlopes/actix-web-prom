@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog] and this project adheres to [Semantic 
   [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
   [Semantic Versioning]: http://semver.org/spec/v2.0.0.html
 
+## [0.8.0] - 2024-02-10
+
+### Added
+- cargo feature process by @Alexey-N-Chernyshov in https://github.com/nlopes/actix-web-prom/pull/76
+- metrics contain the http_version label . by @mstyura in https://github.com/nlopes/actix-web-prom/pull/74
+- configurable path parameters cardinality by @lefuturiste in https://github.com/nlopes/actix-web-prom/pull/73
+- Configurable metrics by @potkae in https://github.com/nlopes/actix-web-prom/pull/70
+
+  [0.8.0]: https://github.com/nlopes/actix-web-prom/releases/tag/v0.8.0
+
 
 ## [0.7.0] - 2023-07-21
 
