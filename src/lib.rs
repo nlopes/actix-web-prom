@@ -737,7 +737,11 @@ where
                 match strfmt(&full_pattern, &params) {
                     Ok(mixed_cardinality_pattern) => mixed_cardinality_pattern,
                     Err(_) => {
-                        warn!("Cannot build mixed cardinality pattern {:?}", full_pattern);
+                        // Ignoring '/swagger-ui/{_:.*}' as this is the default utoipa usage with
+                        // actix-web see: https://docs.rs/crate/utoipa-swagger-ui/latest#Examples
+                        if full_pattern.ne("/swagger-ui/{_:.*}") {
+                            warn!("Cannot build mixed cardinality pattern {:?}", full_pattern);
+                        }
                         full_pattern
                     }
                 }
