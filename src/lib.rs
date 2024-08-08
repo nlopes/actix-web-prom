@@ -1102,6 +1102,45 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
     }
 
     #[actix_web::test]
+    async fn middleware_with_mask_unmatched_pattern() {
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .endpoint("/metrics")
+            .mask_unmatched_patterns("UNKNOWN")
+            .build()
+            .unwrap();
+
+        let app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/resource/{id}").to(HttpResponse::Ok)),
+        )
+        .await;
+
+        let res = call_service(&app, TestRequest::with_uri("/not-real").to_request()).await;
+        assert!(res.status().is_client_error());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(res.to_vec()).unwrap();
+
+        eprintln!("{body}");
+
+        assert!(&body.contains(
+            &String::from_utf8(web::Bytes::from(
+                "actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"UNKNOWN\",method=\"GET\",status=\"404\",le=\"0.005\"} 1"
+        ).to_vec()).unwrap()));
+        assert!(body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "actix_web_prom_http_requests_total{endpoint=\"UNKNOWN\",method=\"GET\",status=\"404\"} 1"
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
+    }
+
+    #[actix_web::test]
     async fn middleware_with_mixed_params_cardinality() {
         // we want to keep metrics label on the "cheap param" but not on the "expensive" param
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
