@@ -616,7 +616,7 @@ impl PrometheusMetrics {
         method: &Method,
         status: StatusCode,
         clock: Instant,
-        was_patch_matched: bool,
+        was_path_matched: bool,
     ) {
         if self.exclude.contains(mixed_pattern)
             || self.exclude_regex.is_match(mixed_pattern)
@@ -633,7 +633,7 @@ impl PrometheusMetrics {
             mixed_pattern
         };
 
-        let final_pattern = if was_patch_matched {
+        let final_pattern = if was_path_matched {
             final_pattern
         } else {
             if let Some(mask) = &self.unmatched_patterns_mask {
@@ -729,7 +729,7 @@ where
         let req = res.request();
         let method = req.method().clone();
         let version = req.version();
-        let was_patch_matched = req.match_pattern().is_some();
+        let was_path_matched = req.match_pattern().is_some();
 
         // get metrics config for this specific route
         // piece of code to allow for more cardinality
@@ -790,7 +790,7 @@ where
                     fallback_pattern,
                     method,
                     version,
-                    was_patch_matched,
+                    was_path_matched,
                 })
             } else {
                 EitherBody::left(StreamLog {
@@ -803,7 +803,7 @@ where
                     fallback_pattern,
                     method,
                     version,
-                    was_patch_matched,
+                    was_path_matched,
                 })
             }
         })))
@@ -851,7 +851,7 @@ pin_project! {
         fallback_pattern: String,
         method: Method,
         version: Version,
-        was_patch_matched: bool
+        was_path_matched: bool
     }
 
 
@@ -859,7 +859,7 @@ pin_project! {
         fn drop(this: Pin<&mut Self>) {
             // update the metrics for this request at the very end of responding
             this.inner
-                .update_metrics(this.version, &this.mixed_pattern, &this.fallback_pattern, &this.method, this.status, this.clock, this.was_patch_matched);
+                .update_metrics(this.version, &this.mixed_pattern, &this.fallback_pattern, &this.method, this.status, this.clock, this.was_path_matched);
         }
     }
 }
