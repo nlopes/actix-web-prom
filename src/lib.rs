@@ -1123,8 +1123,6 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
         let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
 
-        eprintln!("{body}");
-
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
                 "actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"UNKNOWN\",method=\"GET\",status=\"404\",le=\"0.005\"} 1"
