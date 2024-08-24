@@ -326,6 +326,7 @@ pub struct PrometheusMetricsBuilder {
     exclude: HashSet<String>,
     exclude_regex: RegexSet,
     exclude_status: HashSet<StatusCode>,
+    unmatched_patterns_mask: Option<String>,
     metrics_configuration: ActixMetricsConfiguration,
 }
 
@@ -343,6 +344,7 @@ impl PrometheusMetricsBuilder {
             exclude: HashSet::new(),
             exclude_regex: RegexSet::empty(),
             exclude_status: HashSet::new(),
+            unmatched_patterns_mask: None,
             metrics_configuration: ActixMetricsConfiguration::default(),
         }
     }
@@ -392,6 +394,12 @@ impl PrometheusMetricsBuilder {
     /// Ignore and do not record metrics for paths returning the status code.
     pub fn exclude_status<T: Into<StatusCode>>(mut self, status: T) -> Self {
         self.exclude_status.insert(status.into());
+        self
+    }
+
+    /// Replaces the request path with the supplied mask if no actix-web handler is matched
+    pub fn mask_unmatched_patterns<T: Into<String>>(mut self, mask: T) -> Self {
+        self.unmatched_patterns_mask = Some(mask.into());
         self
     }
 
@@ -446,6 +454,7 @@ impl PrometheusMetricsBuilder {
             exclude_regex: self.exclude_regex,
             exclude_status: self.exclude_status,
             enable_http_version_label: self.metrics_configuration.labels.version.is_some(),
+            unmatched_patterns_mask: self.unmatched_patterns_mask,
         })
     }
 }
@@ -568,6 +577,7 @@ pub struct PrometheusMetrics {
     pub(crate) exclude_regex: RegexSet,
     pub(crate) exclude_status: HashSet<StatusCode>,
     pub(crate) enable_http_version_label: bool,
+    pub(crate) unmatched_patterns_mask: Option<String>,
 }
 
 impl PrometheusMetrics {
@@ -606,6 +616,7 @@ impl PrometheusMetrics {
         method: &Method,
         status: StatusCode,
         clock: Instant,
+        was_path_matched: bool,
     ) {
         if self.exclude.contains(mixed_pattern)
             || self.exclude_regex.is_match(mixed_pattern)
@@ -620,6 +631,16 @@ impl PrometheusMetrics {
             fallback_pattern
         } else {
             mixed_pattern
+        };
+
+        let final_pattern = if was_path_matched {
+            final_pattern
+        } else {
+            if let Some(mask) = &self.unmatched_patterns_mask {
+                mask
+            } else {
+                final_pattern
+            }
         };
 
         let label_values = [
@@ -708,6 +729,7 @@ where
         let req = res.request();
         let method = req.method().clone();
         let version = req.version();
+        let was_path_matched = req.match_pattern().is_some();
 
         // get metrics config for this specific route
         // piece of code to allow for more cardinality
@@ -768,6 +790,7 @@ where
                     fallback_pattern,
                     method,
                     version,
+                    was_path_matched,
                 })
             } else {
                 EitherBody::left(StreamLog {
@@ -780,6 +803,7 @@ where
                     fallback_pattern,
                     method,
                     version,
+                    was_path_matched,
                 })
             }
         })))
@@ -827,6 +851,7 @@ pin_project! {
         fallback_pattern: String,
         method: Method,
         version: Version,
+        was_path_matched: bool
     }
 
 
@@ -834,7 +859,7 @@ pin_project! {
         fn drop(this: Pin<&mut Self>) {
             // update the metrics for this request at the very end of responding
             this.inner
-                .update_metrics(this.version, &this.mixed_pattern, &this.fallback_pattern, &this.method, this.status, this.clock);
+                .update_metrics(this.version, &this.mixed_pattern, &this.fallback_pattern, &this.method, this.status, this.clock, this.was_path_matched);
         }
     }
 }
@@ -1069,6 +1094,43 @@ actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/resource/{id}\"
 # TYPE actix_web_prom_http_requests_total counter
 actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",status=\"200\"} 1
 "
+                )
+                .to_vec()
+            )
+            .unwrap()
+        ));
+    }
+
+    #[actix_web::test]
+    async fn middleware_with_mask_unmatched_pattern() {
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .endpoint("/metrics")
+            .mask_unmatched_patterns("UNKNOWN")
+            .build()
+            .unwrap();
+
+        let app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/resource/{id}").to(HttpResponse::Ok)),
+        )
+        .await;
+
+        let res = call_service(&app, TestRequest::with_uri("/not-real").to_request()).await;
+        assert!(res.status().is_client_error());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(res.to_vec()).unwrap();
+
+        assert!(&body.contains(
+            &String::from_utf8(web::Bytes::from(
+                "actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"UNKNOWN\",method=\"GET\",status=\"404\",le=\"0.005\"} 1"
+        ).to_vec()).unwrap()));
+        assert!(body.contains(
+            &String::from_utf8(
+                web::Bytes::from(
+                    "actix_web_prom_http_requests_total{endpoint=\"UNKNOWN\",method=\"GET\",status=\"404\"} 1"
                 )
                 .to_vec()
             )
