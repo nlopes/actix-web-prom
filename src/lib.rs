@@ -4,10 +4,10 @@ Prometheus instrumentation for [actix-web](https://github.com/actix/actix-web). 
 By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
 
   - `actix_web_prom_http_requests_total` (labels: endpoint, method, status): the total number
-   of HTTP requests handled by the actix HttpServer.
+    of HTTP requests handled by the actix HttpServer.
 
   - `actix_web_prom_http_requests_duration_seconds` (labels: endpoint, method, status): the
-   request duration for all HTTP requests handled by the actix HttpServer.
+    request duration for all HTTP requests handled by the actix HttpServer.
 
 
 # Usage
@@ -59,7 +59,7 @@ Using the above as an example, a few things are worth mentioning:
  - `api` is the metrics namespace
  - `/metrics` will be auto exposed (GET requests only) with Content-Type header `content-type: text/plain; version=0.0.4; charset=utf-8`
  - `Some(labels)` is used to add fixed labels to the metrics; `None` can be passed instead
-  if no additional labels are necessary.
+   if no additional labels are necessary.
 
 
 A call to the /metrics endpoint will expose your metrics:
@@ -241,9 +241,12 @@ Actix-web-prom can be configured to allow for more cardinality on some route par
 For that you need to add a middleware to pass some [extensions data](https://blog.adamchalmers.com/what-are-extensions/), specifically the `MetricsConfig` struct that contains the list of params you want to keep cardinality on.
 
 ```rust
-use actix_web::dev::Service;
-use actix_web::HttpMessage;
+use actix_web::{dev::Service, web, HttpMessage, HttpResponse};
 use actix_web_prom::MetricsConfig;
+
+async fn handler() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
 
 web::resource("/posts/{language}/{slug}")
     .wrap_fn(|req, srv| {
@@ -331,7 +334,7 @@ pub struct PrometheusMetricsBuilder {
 }
 
 impl PrometheusMetricsBuilder {
-    /// Create new PrometheusMetricsBuilder
+    /// Create new `PrometheusMetricsBuilder`
     ///
     /// namespace example: "actix"
     pub fn new(namespace: &str) -> Self {
@@ -371,7 +374,7 @@ impl PrometheusMetricsBuilder {
 
     /// Set registry
     ///
-    /// By default one is set and is internal to PrometheusMetrics
+    /// By default one is set and is internal to `PrometheusMetrics`
     pub fn registry(mut self, value: Registry) -> Self {
         self.registry = value;
         self
@@ -409,7 +412,7 @@ impl PrometheusMetricsBuilder {
         self
     }
 
-    /// Instantiate PrometheusMetrics struct
+    /// Instantiate `PrometheusMetrics` struct
     pub fn build(self) -> Result<PrometheusMetrics, Box<dyn std::error::Error + Send + Sync>> {
         let labels_vec = self.metrics_configuration.labels.clone().to_vec();
         let labels = &labels_vec.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
@@ -468,20 +471,25 @@ pub struct LabelsConfiguration {
     version: Option<String>,
 }
 
-impl LabelsConfiguration {
-    /// construct default LabelsConfiguration
-    pub fn default() -> LabelsConfiguration {
-        LabelsConfiguration {
+impl Default for LabelsConfiguration {
+    fn default() -> Self {
+        Self {
             endpoint: String::from("endpoint"),
             method: String::from("method"),
             status: String::from("status"),
             version: None,
         }
     }
+}
 
-    fn to_vec(self) -> Vec<String> {
-        let mut labels = vec![self.endpoint, self.method, self.status];
-        if let Some(version) = self.version {
+impl LabelsConfiguration {
+    fn to_vec(&self) -> Vec<String> {
+        let mut labels = vec![
+            self.endpoint.clone(),
+            self.method.clone(),
+            self.status.clone(),
+        ];
+        if let Some(version) = self.version.clone() {
             labels.push(version);
         }
         labels
@@ -522,29 +530,30 @@ pub struct ActixMetricsConfiguration {
     labels: LabelsConfiguration,
 }
 
-impl ActixMetricsConfiguration {
-    /// Create the default metrics configuration
-    pub fn default() -> ActixMetricsConfiguration {
-        ActixMetricsConfiguration {
+impl Default for ActixMetricsConfiguration {
+    fn default() -> Self {
+        Self {
             http_requests_total_name: String::from("http_requests_total"),
             http_requests_duration_seconds_name: String::from("http_requests_duration_seconds"),
             labels: LabelsConfiguration::default(),
         }
     }
+}
 
+impl ActixMetricsConfiguration {
     /// Set the labels collected for the metrics
     pub fn labels(mut self, labels: LabelsConfiguration) -> Self {
         self.labels = labels;
         self
     }
 
-    /// Set name for http_requests_total metric
+    /// Set name for `http_requests_total` metric
     pub fn http_requests_total_name(mut self, name: &str) -> Self {
         self.http_requests_total_name = name.to_owned();
         self
     }
 
-    /// Set name for http_requests_duration_seconds metric
+    /// Set name for `http_requests_duration_seconds` metric
     pub fn http_requests_duration_seconds_name(mut self, name: &str) -> Self {
         self.http_requests_duration_seconds_name = name.to_owned();
         self
@@ -556,11 +565,11 @@ impl ActixMetricsConfiguration {
 /// By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
 ///
 ///   - `actix_web_prom_http_requests_total` (labels: endpoint, method, status): the total
-///   number of HTTP requests handled by the actix HttpServer.
+///     number of HTTP requests handled by the actix `HttpServer`.
 ///
 ///   - `actix_web_prom_http_requests_duration_seconds` (labels: endpoint, method,
-///    status): the request duration for all HTTP requests handled by the actix
-///    HttpServer.
+///     status): the request duration for all HTTP requests handled by the actix
+///     `HttpServer`.
 pub struct PrometheusMetrics {
     pub(crate) http_requests_total: IntCounterVec,
     pub(crate) http_requests_duration_seconds: HistogramVec,
@@ -635,12 +644,10 @@ impl PrometheusMetrics {
 
         let final_pattern = if was_path_matched {
             final_pattern
+        } else if let Some(mask) = &self.unmatched_patterns_mask {
+            mask
         } else {
-            if let Some(mask) = &self.unmatched_patterns_mask {
-                mask
-            } else {
-                final_pattern
-            }
+            final_pattern
         };
 
         let label_values = [
@@ -753,15 +760,14 @@ where
                         params.insert(key.to_string(), val.to_string());
                         continue;
                     }
-                    params.insert(key.to_string(), format!("{{{}}}", key));
+                    params.insert(key.to_string(), format!("{{{key}}}"));
                 }
 
-                match strfmt(&full_pattern, &params) {
-                    Ok(mixed_cardinality_pattern) => mixed_cardinality_pattern,
-                    Err(_) => {
-                        warn!("Cannot build mixed cardinality pattern {:?}", full_pattern);
-                        full_pattern
-                    }
+                if let Ok(mixed_cardinality_pattern) = strfmt(&full_pattern, &params) {
+                    mixed_cardinality_pattern
+                } else {
+                    warn!("Cannot build mixed cardinality pattern {:?}", full_pattern);
+                    full_pattern
                 }
             }
         };
