@@ -10,10 +10,10 @@ Prometheus instrumentation for [actix-web](https://github.com/actix/actix-web). 
 By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
 
   - `actix_web_prom_http_requests_total` (labels: endpoint, method, status): the total number
-   of HTTP requests handled by the actix HttpServer.
+    of HTTP requests handled by the actix HttpServer.
 
   - `actix_web_prom_http_requests_duration_seconds` (labels: endpoint, method, status): the
-   request duration for all HTTP requests handled by the actix HttpServer.
+    request duration for all HTTP requests handled by the actix HttpServer.
 
 
 ## Usage
@@ -63,7 +63,7 @@ Using the above as an example, a few things are worth mentioning:
  - `api` is the metrics namespace
  - `/metrics` will be auto exposed (GET requests only) with Content-Type header `content-type: text/plain; version=0.0.4; charset=utf-8`
  - `Some(labels)` is used to add fixed labels to the metrics; `None` can be passed instead
-  if no additional labels are necessary.
+   if no additional labels are necessary.
 
 
 A call to the /metrics endpoint will expose your metrics:
@@ -241,9 +241,12 @@ Actix-web-prom can be configured to allow for more cardinality on some route par
 For that you need to add a middleware to pass some [extensions data](https://blog.adamchalmers.com/what-are-extensions/), specifically the `MetricsConfig` struct that contains the list of params you want to keep cardinality on.
 
 ```rust
-use actix_web::dev::Service;
-use actix_web::HttpMessage;
+use actix_web::{dev::Service, web, HttpMessage, HttpResponse};
 use actix_web_prom::MetricsConfig;
+
+async fn handler() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
 
 web::resource("/posts/{language}/{slug}")
     .wrap_fn(|req, srv| {
@@ -273,4 +276,35 @@ PrometheusMetricsBuilder::new("api")
     .build()
     .unwrap();
 ```
+
 See full example `configuring_default_metrics.rs`.
+
+### Masking unknown paths
+
+This is useful to avoid producting lots and lots of useless metrics due to bots on the internet.
+
+What this does is transform a path that will never be found (404) into *one single
+metric*. So, if you want metrics about every single path that is hit, even if it doesn't
+exist, avoid this section altogether.
+
+```rust
+use actix_web_prom::PrometheusMetricsBuilder;
+
+PrometheusMetricsBuilder::new("api")
+    .endpoint("/metrics")
+    .mask_unmatched_patterns("UNKNOWN")
+    .build()
+    .unwrap();
+```
+
+The above will convert all `/<nonexistent-path>` into `UNKNOWN`:
+
+```
+http_requests_duration_seconds_sum{endpoint="/favicon.ico",method="GET",status="400"} 0.000424898
+```
+
+becomes
+
+```
+http_requests_duration_seconds_sum{endpoint="UNKNOWN",method="GET",status="400"} 0.000424898
+```
