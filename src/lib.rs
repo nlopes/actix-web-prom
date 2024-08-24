@@ -797,7 +797,7 @@ where
                 if let Ok(mixed_cardinality_pattern) = strfmt(&full_pattern, &params) {
                     mixed_cardinality_pattern
                 } else {
-                    warn!("Cannot build mixed cardinality pattern {:?}", full_pattern);
+                    warn!("Cannot build mixed cardinality pattern {full_pattern}, with params {params:?}");
                     full_pattern
                 }
             }
