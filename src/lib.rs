@@ -276,7 +276,38 @@ PrometheusMetricsBuilder::new("api")
     .build()
     .unwrap();
 ```
+
 See full example `configuring_default_metrics.rs`.
+
+## Masking unknown paths
+
+This is useful to avoid producting lots and lots of useless metrics due to bots on the internet.
+
+What this does is transform a path that will never be found (404) into *one single
+metric*. So, if you want metrics about every single path that is hit, even if it doesn't
+exist, avoid this section altogether.
+
+```rust,no_run
+use actix_web_prom::PrometheusMetricsBuilder;
+
+PrometheusMetricsBuilder::new("api")
+    .endpoint("/metrics")
+    .mask_unmatched_patterns("UNKNOWN")
+    .build()
+    .unwrap();
+```
+
+The above will convert all `/<nonexistent-path>` into `UNKNOWN`:
+
+```text
+http_requests_duration_seconds_sum{endpoint="/favicon.ico",method="GET",status="400"} 0.000424898
+```
+
+becomes
+
+```text
+http_requests_duration_seconds_sum{endpoint="UNKNOWN",method="GET",status="400"} 0.000424898
+```
 */
 #![deny(missing_docs)]
 
@@ -796,7 +827,7 @@ where
                     fallback_pattern,
                     method,
                     version,
-                    was_path_matched,
+                    was_path_matched: true,
                 })
             } else {
                 EitherBody::left(StreamLog {
