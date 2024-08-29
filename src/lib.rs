@@ -339,11 +339,11 @@ use prometheus::{
 use regex::RegexSet;
 use strfmt::strfmt;
 
-/// MetricsConfig define middleware and config struct to change the behaviour of the metrics
-/// struct to define some particularities
+/// Define optional behaviour of metrics retention for a route or a subset of routes
+/// This MetricsConfig is defined via extensions data
 #[derive(Debug, Clone)]
 pub struct MetricsConfig {
-    /// list of params where the cardinality matters
+    /// list of params where the cardinality is useful and want to be preserved
     pub cardinality_keep_params: Vec<String>,
 }
 
