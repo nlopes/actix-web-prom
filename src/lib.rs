@@ -316,6 +316,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::{ready, Future, Ready};
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
@@ -327,6 +328,7 @@ use actix_web::{
         header::{HeaderValue, CONTENT_TYPE},
         Method, StatusCode, Version,
     },
+    middleware::{from_fn, Next},
     web::Bytes,
     Error, HttpMessage,
 };
@@ -924,6 +926,60 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
     }
 }
 
+/// Helper middleware to allow user that cannot use wrap_fn directly (eg. downstream code is defining a route with attribute macro)
+///
+/// Example use:
+/// ```rust
+/// use actix_web::{route, HttpRequest, HttpResponse, Result as ActixResult};
+/// use actix_web_prom::{MetricsConfiguratorMiddleware, MetricsConfig};
+///
+/// #[route(
+///     "/posts/{language}/{slug}",
+///     method = "GET",
+///     method = "HEAD",
+///     wrap = "(MetricsConfiguratorMiddleware(MetricsConfig { cardinality_keep_params: vec![\"language\".into()] })).into_middleware()"
+/// )]
+/// async fn get_source_info(req: HttpRequest) -> ActixResult<HttpResponse> {
+///     Ok(HttpResponse::Ok().into())
+/// }
+/// ```
+pub struct MetricsConfiguratorMiddleware(pub MetricsConfig);
+
+impl MetricsConfiguratorMiddleware {
+    async fn append_metrics_config(
+        &self,
+        req: ServiceRequest,
+        next: Next<impl MessageBody + 'static>,
+    ) -> Result<ServiceResponse<impl MessageBody>, Error> {
+        let req = req;
+        req.extensions_mut().insert::<MetricsConfig>(MetricsConfig {
+            cardinality_keep_params: self.0.cardinality_keep_params.clone(),
+        });
+        next.call(req).await
+    }
+
+    /// Build into helper middleware to configure metrics behaviour for a specific path or service
+    pub fn into_middleware<S, B>(
+        self,
+    ) -> impl Transform<
+        S,
+        ServiceRequest,
+        Response = ServiceResponse<impl MessageBody>,
+        Error = Error,
+        InitError = (),
+    >
+    where
+        S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+        B: MessageBody + 'static,
+    {
+        let this = Rc::new(self);
+        from_fn(move |req, next| {
+            let this = Rc::clone(&this);
+            async move { Self::append_metrics_config(&this, req, next).await }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1250,6 +1306,36 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
             )
             .unwrap()
         ));
+    }
+
+    /// Test use of MetricsConfiguratorMiddleware
+    #[actix_web::test]
+    async fn middleware_metrics_configurator_helper() {
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .endpoint("/metrics")
+            .build()
+            .unwrap();
+
+        let app = init_service(
+            App::new().wrap(prometheus).service(
+                web::resource("/resource/{cheap}/{expensive}")
+                    .wrap(
+                        MetricsConfiguratorMiddleware(MetricsConfig {
+                            cardinality_keep_params: vec!["cheap".into()],
+                        })
+                        .into_middleware(),
+                    )
+                    .to(|| async { HttpResponse::Ok().finish() }),
+            ),
+        )
+        .await;
+
+        let res = call_service(
+            &app,
+            TestRequest::with_uri("/resource/foo/12345").to_request(),
+        )
+        .await;
+        assert!(res.status().is_success());
     }
 
     #[actix_web::test]
