@@ -22,7 +22,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.8.0"
+actix-web-prom = "0.9.0"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
