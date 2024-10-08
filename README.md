@@ -260,6 +260,23 @@ web::resource("/posts/{language}/{slug}")
 
 See the full example `with_cardinality_on_params.rs`.
 
+Actix-web-prom also provide a helper middleware which is a little bit more compact :
+
+```rust
+use actix_web::{route, HttpRequest, HttpResponse, Result as ActixResult};
+use actix_web_prom::{MetricsConfiguratorMiddleware, MetricsConfig};
+
+#[route(
+    "/posts/{language}/{slug}",
+    method = "GET",
+    method = "HEAD",
+    wrap = "(MetricsConfiguratorMiddleware(MetricsConfig { cardinality_keep_params: vec![\"language\".into()] })).into_middleware()"
+)]
+async fn get_source_info(req: HttpRequest) -> ActixResult<HttpResponse> {
+    Ok(HttpResponse::Ok().into())
+}
+```
+
 ### Configurable metric names
 
 If you want to rename the default metrics, you can use `ActixMetricsConfiguration` to do so.
