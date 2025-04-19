@@ -24,44 +24,24 @@ jobs:
             nightly: true
 
     steps:
-    - uses: actions/checkout@v2
-
-    - name: Install toolchain
-      uses: actions-rs/toolchain@v1
+    - uses: actions/checkout@v4
+    
+    - name: Install ${{ matrix.toolchain }} toolchain
+      uses: dtolnay/rust-toolchain@master
       with:
-          profile: minimal
-          toolchain: ${{ matrix.toolchain }}
-          override: true
-          components: clippy, rustfmt
-
-    - name: Cache cargo registry
-      uses: actions/cache@v2
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-        key: rust_${{ matrix.toolchain }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        toolchain: ${{ matrix.toolchain }}
+        components: clippy, rustfmt
+    
+    - uses: Swatinem/rust-cache@v2
 
     - name: Run cargo fmt
-      uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: --all -- --check
+      run: cargo fmt --all --check
 
     - name: Run tests
-      uses: actions-rs/cargo@v1
-      with:
-        command: test
-        args: --all-features --all-targets --verbose
+      run: cargo test --all-features --all-targets --verbose
 
     - name: Run doc tests
-      uses: actions-rs/cargo@v1
-      with:
-        command: test
-        args: --doc --verbose
+      run: cargo test --doc --verbose
 
     - name: Run clippy
-      uses: actions-rs/cargo@v1
-      with:
-        command: clippy
-        args: --all-targets --all-features
+      run: cargo clippy --all-targets --all-features
