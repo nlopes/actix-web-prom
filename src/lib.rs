@@ -16,7 +16,7 @@ First add `actix-web-prom` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-actix-web-prom = "0.9.0"
+actix-web-prom = "0.10.0"
 ```
 
 You then instantiate the prometheus middleware and pass it to `.wrap()`:
@@ -797,7 +797,9 @@ where
                 if let Ok(mixed_cardinality_pattern) = strfmt(&full_pattern, &params) {
                     mixed_cardinality_pattern
                 } else {
-                    warn!("Cannot build mixed cardinality pattern {full_pattern}, with params {params:?}");
+                    warn!(
+                        "Cannot build mixed cardinality pattern {full_pattern}, with params {params:?}"
+                    );
                     full_pattern
                 }
             }

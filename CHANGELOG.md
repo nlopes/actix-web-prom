@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog] and this project adheres to [Semantic 
   [Keep a Changelog]: http://keepachangelog.com/en/1.0.0/
   [Semantic Versioning]: http://semver.org/spec/v2.0.0.html
 
+
+## [0.10.0] - 2025-05-10
+
+This is a fairly simple change, moving from `prometheus` 0.13 to 0.14. The reason I'm
+bumping a minor version is because I expose `prometheus` types, namely `Registry`. Even
+though I don't believe there are breaking changes, I'm playing it safe.
+
+### Added
+- bump `prometheus` to 0.14
+
+  [0.10.0]: https://github.com/nlopes/actix-web-prom/releases/tag/v0.10.0
+
+
 ## [0.9.0] - 2024-09-27
 
 ### Added
