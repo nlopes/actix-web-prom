@@ -4,10 +4,10 @@ Prometheus instrumentation for [actix-web](https://github.com/actix/actix-web). 
 By default two metrics are tracked (this assumes the namespace `actix_web_prom`):
 
   - `actix_web_prom_http_requests_total` (labels: endpoint, method, status): the total number
-    of HTTP requests handled by the actix HttpServer.
+    of HTTP requests handled by the actix `HttpServer`.
 
   - `actix_web_prom_http_requests_duration_seconds` (labels: endpoint, method, status): the
-    request duration for all HTTP requests handled by the actix HttpServer.
+    request duration for all HTTP requests handled by the actix `HttpServer`.
 
 
 # Usage
@@ -313,7 +313,7 @@ http_requests_duration_seconds_sum{endpoint="UNKNOWN",method="GET",status="400"}
 
 use log::warn;
 use std::collections::{HashMap, HashSet};
-use std::future::{ready, Future, Ready};
+use std::future::{Future, Ready, ready};
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -321,14 +321,14 @@ use std::task::{Context, Poll};
 use std::time::Instant;
 
 use actix_web::{
+    Error, HttpMessage,
     body::{BodySize, EitherBody, MessageBody},
     dev::{self, Service, ServiceRequest, ServiceResponse, Transform},
     http::{
-        header::{HeaderValue, CONTENT_TYPE},
         Method, StatusCode, Version,
+        header::{CONTENT_TYPE, HeaderValue},
     },
     web::Bytes,
-    Error, HttpMessage,
 };
 use futures_core::ready;
 use pin_project_lite::pin_project;
@@ -339,7 +339,7 @@ use prometheus::{
 use regex::RegexSet;
 use strfmt::strfmt;
 
-/// MetricsConfig define middleware and config struct to change the behaviour of the metrics
+/// `MetricsConfig` define middleware and config struct to change the behaviour of the metrics
 /// struct to define some particularities
 #[derive(Debug, Clone)]
 pub struct MetricsConfig {
@@ -348,7 +348,7 @@ pub struct MetricsConfig {
 }
 
 #[derive(Debug)]
-/// Builder to create new PrometheusMetrics struct.HistogramVec
+/// Builder to create new `PrometheusMetrics` struct.HistogramVec
 ///
 /// It allows setting optional parameters like registry, buckets, etc.
 pub struct PrometheusMetricsBuilder {
@@ -368,6 +368,7 @@ impl PrometheusMetricsBuilder {
     /// Create new `PrometheusMetricsBuilder`
     ///
     /// namespace example: "actix"
+    #[must_use]
     pub fn new(namespace: &str) -> Self {
         Self {
             namespace: namespace.into(),
@@ -386,18 +387,21 @@ impl PrometheusMetricsBuilder {
     /// Set actix web endpoint
     ///
     /// Example: "/metrics"
+    #[must_use]
     pub fn endpoint(mut self, value: &str) -> Self {
         self.endpoint = Some(value.into());
         self
     }
 
     /// Set histogram buckets
+    #[must_use]
     pub fn buckets(mut self, value: &[f64]) -> Self {
         self.buckets = value.to_vec();
         self
     }
 
     /// Set labels to add on every metrics
+    #[must_use]
     pub fn const_labels(mut self, value: HashMap<String, String>) -> Self {
         self.const_labels = value;
         self
@@ -406,18 +410,21 @@ impl PrometheusMetricsBuilder {
     /// Set registry
     ///
     /// By default one is set and is internal to `PrometheusMetrics`
+    #[must_use]
     pub fn registry(mut self, value: Registry) -> Self {
         self.registry = value;
         self
     }
 
     /// Ignore and do not record metrics for specified path.
+    #[must_use]
     pub fn exclude<T: Into<String>>(mut self, path: T) -> Self {
         self.exclude.insert(path.into());
         self
     }
 
     /// Ignore and do not record metrics for paths matching the regex.
+    #[must_use]
     pub fn exclude_regex<T: Into<String>>(mut self, path: T) -> Self {
         let mut patterns = self.exclude_regex.patterns().to_vec();
         patterns.push(path.into());
@@ -426,32 +433,39 @@ impl PrometheusMetricsBuilder {
     }
 
     /// Ignore and do not record metrics for paths returning the status code.
+    #[must_use]
     pub fn exclude_status<T: Into<StatusCode>>(mut self, status: T) -> Self {
         self.exclude_status.insert(status.into());
         self
     }
 
     /// Replaces the request path with the supplied mask if no actix-web handler is matched
+    #[must_use]
     pub fn mask_unmatched_patterns<T: Into<String>>(mut self, mask: T) -> Self {
         self.unmatched_patterns_mask = Some(mask.into());
         self
     }
 
     /// Set metrics configuration
+    #[must_use]
     pub fn metrics_configuration(mut self, value: ActixMetricsConfiguration) -> Self {
         self.metrics_configuration = value;
         self
     }
 
     /// Instantiate `PrometheusMetrics` struct
+    ///
+    /// # Errors
+    /// It will return an error that implements Error + Send + Sync
     pub fn build(self) -> Result<PrometheusMetrics, Box<dyn std::error::Error + Send + Sync>> {
         let labels_vec = self.metrics_configuration.labels.clone().to_vec();
-        let labels = &labels_vec.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+        let labels = &labels_vec
+            .iter()
+            .map(std::string::String::as_str)
+            .collect::<Vec<&str>>();
 
         let http_requests_total_opts = Opts::new(
-            self.metrics_configuration
-                .http_requests_total_name
-                .to_owned(),
+            self.metrics_configuration.http_requests_total_name.clone(),
             "Total number of HTTP requests",
         )
         .namespace(&self.namespace)
@@ -462,11 +476,11 @@ impl PrometheusMetricsBuilder {
         let http_requests_duration_seconds_opts = HistogramOpts::new(
             self.metrics_configuration
                 .http_requests_duration_seconds_name
-                .to_owned(),
+                .clone(),
             "HTTP request duration in seconds for all requests",
         )
         .namespace(&self.namespace)
-        .buckets(self.buckets.to_vec())
+        .buckets(self.buckets.clone())
         .const_labels(self.const_labels.clone());
 
         let http_requests_duration_seconds =
@@ -527,24 +541,28 @@ impl LabelsConfiguration {
     }
 
     /// set http method label
+    #[must_use]
     pub fn method(mut self, name: &str) -> Self {
-        self.method = name.to_owned();
+        name.clone_into(&mut self.method);
         self
     }
 
     /// set http endpoint label
+    #[must_use]
     pub fn endpoint(mut self, name: &str) -> Self {
-        self.endpoint = name.to_owned();
+        name.clone_into(&mut self.endpoint);
         self
     }
 
     /// set http status label
+    #[must_use]
     pub fn status(mut self, name: &str) -> Self {
-        self.status = name.to_owned();
+        name.clone_into(&mut self.status);
         self
     }
 
     /// set http version label
+    #[must_use]
     pub fn version(mut self, name: &str) -> Self {
         self.version = Some(name.to_owned());
         self
@@ -573,20 +591,23 @@ impl Default for ActixMetricsConfiguration {
 
 impl ActixMetricsConfiguration {
     /// Set the labels collected for the metrics
+    #[must_use]
     pub fn labels(mut self, labels: LabelsConfiguration) -> Self {
         self.labels = labels;
         self
     }
 
     /// Set name for `http_requests_total` metric
+    #[must_use]
     pub fn http_requests_total_name(mut self, name: &str) -> Self {
-        self.http_requests_total_name = name.to_owned();
+        name.clone_into(&mut self.http_requests_total_name);
         self
     }
 
     /// Set name for `http_requests_duration_seconds` metric
+    #[must_use]
     pub fn http_requests_duration_seconds_name(mut self, name: &str) -> Self {
-        self.http_requests_duration_seconds_name = name.to_owned();
+        name.clone_into(&mut self.http_requests_duration_seconds_name);
         self
     }
 }
@@ -930,8 +951,8 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
 mod tests {
     use super::*;
     use actix_web::dev::Service;
-    use actix_web::test::{call_and_read_body, call_service, init_service, read_body, TestRequest};
-    use actix_web::{web, App, HttpMessage, HttpResponse, Resource, Scope};
+    use actix_web::test::{TestRequest, call_and_read_body, call_service, init_service, read_body};
+    use actix_web::{App, HttpMessage, HttpResponse, Resource, Scope, web};
 
     use prometheus::{Counter, Opts};
 
@@ -966,18 +987,20 @@ mod tests {
 actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/health_check\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
 "
         ).to_vec()).unwrap()));
-        assert!(body.contains(
-            &String::from_utf8(
-                web::Bytes::from(
-                    "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
+        assert!(
+            body.contains(
+                &String::from_utf8(
+                    web::Bytes::from(
+                        "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
 # TYPE actix_web_prom_http_requests_total counter
 actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",status=\"200\"} 1
 "
+                    )
+                    .to_vec()
                 )
-                .to_vec()
+                .unwrap()
             )
-            .unwrap()
-        ));
+        );
     }
 
     #[actix_web::test]
@@ -1006,7 +1029,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
             (Version::HTTP_3, 11),
         ]);
 
-        for (http_version, repeats) in test_cases.iter() {
+        for (http_version, repeats) in &test_cases {
             for _ in 0..*repeats {
                 let res = call_service(
                     &app,
@@ -1026,7 +1049,7 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
             "text/plain; version=0.0.4; charset=utf-8"
         );
         let body = String::from_utf8(read_body(res).await.to_vec()).unwrap();
-        println!("Body: {}", body);
+        println!("Body: {body}");
         for (http_version, repeats) in test_cases {
             assert!(&body.contains(
                 &String::from_utf8(web::Bytes::from(
@@ -1126,18 +1149,20 @@ actix_web_prom_http_requests_total{endpoint=\"/internal/health_check\",method=\"
 actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/resource/{id}\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
 "
         ).to_vec()).unwrap()));
-        assert!(body.contains(
-            &String::from_utf8(
-                web::Bytes::from(
-                    "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
+        assert!(
+            body.contains(
+                &String::from_utf8(
+                    web::Bytes::from(
+                        "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
 # TYPE actix_web_prom_http_requests_total counter
 actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",status=\"200\"} 1
 "
+                    )
+                    .to_vec()
                 )
-                .to_vec()
+                .unwrap()
             )
-            .unwrap()
-        ));
+        );
     }
 
     #[actix_web::test]
@@ -1196,7 +1221,10 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
                     })
                     .to(|path: web::Path<(String, String)>| async {
                         let (cheap, _expensive) = path.into_inner();
-                        if !["foo", "bar"].map(|x| x.to_string()).contains(&cheap) {
+                        if !["foo", "bar"]
+                            .map(std::string::ToString::to_string)
+                            .contains(&cheap)
+                        {
                             return HttpResponse::NotFound().finish();
                         }
                         HttpResponse::Ok().finish()
@@ -1216,7 +1244,7 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
 
         let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
-        println!("Body: {}", body);
+        println!("Body: {body}");
         assert!(&body.contains(
             &String::from_utf8(web::Bytes::from(
                 "actix_web_prom_http_requests_duration_seconds_bucket{endpoint=\"/resource/foo/{expensive}\",method=\"GET\",status=\"200\",le=\"0.005\"} 1"
@@ -1242,7 +1270,7 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
 
         let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let body = String::from_utf8(res.to_vec()).unwrap();
-        println!("Body: {}", body);
+        println!("Body: {body}");
         assert!(body.contains(
             &String::from_utf8(
                 web::Bytes::from(
@@ -1296,18 +1324,20 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
 
         call_service(&app, TestRequest::with_uri("/health_checkz").to_request()).await;
         let res = call_and_read_body(&app, TestRequest::with_uri("/prometheus").to_request()).await;
-        assert!(String::from_utf8(res.to_vec()).unwrap().contains(
-            &String::from_utf8(
-                web::Bytes::from(
-                    "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
+        assert!(
+            String::from_utf8(res.to_vec()).unwrap().contains(
+                &String::from_utf8(
+                    web::Bytes::from(
+                        "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
 # TYPE actix_web_prom_http_requests_total counter
 actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",status=\"404\"} 1
 "
+                    )
+                    .to_vec()
                 )
-                .to_vec()
+                .unwrap()
             )
-            .unwrap()
-        ));
+        );
     }
 
     #[actix_web::test]
@@ -1335,18 +1365,20 @@ actix_web_prom_http_requests_total{endpoint=\"/health_checkz\",method=\"GET\",st
         // Verify that 'counter' does not appear in the output before we use it
         call_service(&app, TestRequest::with_uri("/health_check").to_request()).await;
         let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
-        assert!(!String::from_utf8(res.to_vec()).unwrap().contains(
-            &String::from_utf8(
-                web::Bytes::from(
-                    "# HELP actix_web_prom_counter some random counter
+        assert!(
+            !String::from_utf8(res.to_vec()).unwrap().contains(
+                &String::from_utf8(
+                    web::Bytes::from(
+                        "# HELP actix_web_prom_counter some random counter
 # TYPE actix_web_prom_counter counter
 actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"} 1
 "
+                    )
+                    .to_vec()
                 )
-                .to_vec()
+                .unwrap()
             )
-            .unwrap()
-        ));
+        );
 
         // Verify that 'counter' appears after we use it
         counter
@@ -1357,18 +1389,20 @@ actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"
             .inc();
         call_service(&app, TestRequest::with_uri("/metrics").to_request()).await;
         let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
-        assert!(String::from_utf8(res.to_vec()).unwrap().contains(
-            &String::from_utf8(
-                web::Bytes::from(
-                    "# HELP actix_web_prom_counter some random counter
+        assert!(
+            String::from_utf8(res.to_vec()).unwrap().contains(
+                &String::from_utf8(
+                    web::Bytes::from(
+                        "# HELP actix_web_prom_counter some random counter
 # TYPE actix_web_prom_counter counter
 actix_web_prom_counter{endpoint=\"endpoint\",method=\"method\",status=\"status\"} 2
 "
+                    )
+                    .to_vec()
                 )
-                .to_vec()
+                .unwrap()
             )
-            .unwrap()
-        ));
+        );
     }
 
     #[actix_web::test]
@@ -1528,18 +1562,20 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",label1=\"value1\",
 actix_web_prom_my_http_request_duration_bucket{endpoint=\"/health_check\",method=\"GET\",status=\"200\",le=\"0.005\"} 1
 "
         ).to_vec()).unwrap()));
-        assert!(body.contains(
-            &String::from_utf8(
-                web::Bytes::from(
-                    "# HELP actix_web_prom_my_http_requests_total Total number of HTTP requests
+        assert!(
+            body.contains(
+                &String::from_utf8(
+                    web::Bytes::from(
+                        "# HELP actix_web_prom_my_http_requests_total Total number of HTTP requests
 # TYPE actix_web_prom_my_http_requests_total counter
 actix_web_prom_my_http_requests_total{endpoint=\"/health_check\",method=\"GET\",status=\"200\"} 1
 "
+                    )
+                    .to_vec()
                 )
-                .to_vec()
+                .unwrap()
             )
-            .unwrap()
-        ));
+        );
     }
 
     #[test]
@@ -1604,18 +1640,20 @@ actix_web_prom_my_http_requests_total{endpoint=\"/health_check\",method=\"GET\",
             "text/plain; version=0.0.4; charset=utf-8"
         );
         let body = String::from_utf8(read_body(res).await.to_vec()).unwrap();
-        assert!(&body.contains(
-            &String::from_utf8(
-                web::Bytes::from(
-                    "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
+        assert!(
+            &body.contains(
+                &String::from_utf8(
+                    web::Bytes::from(
+                        "# HELP actix_web_prom_http_requests_total Total number of HTTP requests
 # TYPE actix_web_prom_http_requests_total counter
 actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",status=\"200\"} 1
 "
+                    )
+                    .to_vec()
                 )
-                .to_vec()
+                .unwrap()
             )
-            .unwrap()
-        ));
+        );
 
         assert!(!&body.contains("endpoint=\"/ping\""));
         assert!(!&body.contains("endpoint=\"/readyz"));
