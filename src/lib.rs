@@ -311,7 +311,7 @@ http_requests_duration_seconds_sum{endpoint="UNKNOWN",method="GET",status="400"}
 */
 #![deny(missing_docs)]
 
-use log::warn;
+use log::debug;
 use std::collections::{HashMap, HashSet};
 use std::future::{ready, Future, Ready};
 use std::marker::PhantomData;
@@ -336,8 +336,16 @@ use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
 };
 
-use regex::RegexSet;
+use regex::{Regex, RegexSet};
 use strfmt::strfmt;
+
+// Lazily initialized regex to strip regex constraints from path patterns
+// e.g., {tail:.*} -> {tail}, {id:[0-9]+} -> {id}
+fn normalize_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
+    static CONSTRAINT_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = CONSTRAINT_RE.get_or_init(|| Regex::new(r"\{(\w+):[^}]+\}").unwrap());
+    re.replace_all(pattern, "{$1}")
+}
 
 /// MetricsConfig define middleware and config struct to change the behaviour of the metrics
 /// struct to define some particularities
@@ -794,10 +802,12 @@ where
                     params.insert(key.to_string(), format!("{{{key}}}"));
                 }
 
-                if let Ok(mixed_cardinality_pattern) = strfmt(&full_pattern, &params) {
+                let normalized_pattern = normalize_pattern(&full_pattern);
+
+                if let Ok(mixed_cardinality_pattern) = strfmt(&normalized_pattern, &params) {
                     mixed_cardinality_pattern
                 } else {
-                    warn!(
+                    debug!(
                         "Cannot build mixed cardinality pattern {full_pattern}, with params {params:?}"
                     );
                     full_pattern
