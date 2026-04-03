@@ -641,8 +641,8 @@ impl PrometheusMetrics {
     }
 
     fn matches(&self, path: &str, method: &Method) -> bool {
-        if self.endpoint.is_some() {
-            self.endpoint.as_ref().unwrap() == path && method == Method::GET
+        if let Some(ref endpoint) = self.endpoint {
+            endpoint == path && method == Method::GET
         } else {
             false
         }
