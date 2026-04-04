@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use actix_web::dev::Service;
 use actix_web::HttpMessage;
+use actix_web::dev::Service;
 
-use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use actix_web_prom::{MetricsConfig, PrometheusMetricsBuilder};
 
 async fn health() -> HttpResponse {

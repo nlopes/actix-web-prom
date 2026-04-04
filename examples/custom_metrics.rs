@@ -1,6 +1,6 @@
-use actix_web::{web, App, HttpResponse, HttpServer};
+use actix_web::{App, HttpResponse, HttpServer, web};
 use actix_web_prom::PrometheusMetricsBuilder;
-use prometheus::{opts, IntCounterVec};
+use prometheus::{IntCounterVec, opts};
 
 async fn health(counter: web::Data<IntCounterVec>) -> HttpResponse {
     counter
