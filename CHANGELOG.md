@@ -9,6 +9,9 @@ The format is based on [Keep a Changelog] and this project adheres to [Semantic 
 
 ## Unreleased
 
+### Changed
+- `exclude_regex` no longer panics on invalid patterns; regex compilation is deferred to `build()` which returns the error via `Result`
+
 ## [0.10.0] - 2025-05-10
 
 This is a fairly simple change, moving from `prometheus` 0.13 to 0.14. The reason I'm

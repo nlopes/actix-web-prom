@@ -358,7 +358,7 @@ pub struct PrometheusMetricsBuilder {
     registry: Registry,
     buckets: Vec<f64>,
     exclude: HashSet<String>,
-    exclude_regex: RegexSet,
+    exclude_regex: Vec<String>,
     exclude_status: HashSet<StatusCode>,
     unmatched_patterns_mask: Option<String>,
     metrics_configuration: ActixMetricsConfiguration,
@@ -377,7 +377,7 @@ impl PrometheusMetricsBuilder {
             registry: Registry::new(),
             buckets: prometheus::DEFAULT_BUCKETS.to_vec(),
             exclude: HashSet::new(),
-            exclude_regex: RegexSet::empty(),
+            exclude_regex: Vec::new(),
             exclude_status: HashSet::new(),
             unmatched_patterns_mask: None,
             metrics_configuration: ActixMetricsConfiguration::default(),
@@ -426,9 +426,7 @@ impl PrometheusMetricsBuilder {
     /// Ignore and do not record metrics for paths matching the regex.
     #[must_use]
     pub fn exclude_regex<T: Into<String>>(mut self, path: T) -> Self {
-        let mut patterns = self.exclude_regex.patterns().to_vec();
-        patterns.push(path.into());
-        self.exclude_regex = RegexSet::new(patterns).unwrap();
+        self.exclude_regex.push(path.into());
         self
     }
 
@@ -491,6 +489,8 @@ impl PrometheusMetricsBuilder {
         self.registry
             .register(Box::new(http_requests_duration_seconds.clone()))?;
 
+        let exclude_regex = RegexSet::new(self.exclude_regex)?;
+
         Ok(PrometheusMetrics {
             http_requests_total,
             http_requests_duration_seconds,
@@ -499,7 +499,7 @@ impl PrometheusMetricsBuilder {
             endpoint: self.endpoint,
             const_labels: self.const_labels,
             exclude: self.exclude,
-            exclude_regex: self.exclude_regex,
+            exclude_regex,
             exclude_status: self.exclude_status,
             enable_http_version_label: self.metrics_configuration.labels.version.is_some(),
             unmatched_patterns_mask: self.unmatched_patterns_mask,
