@@ -311,7 +311,7 @@ http_requests_duration_seconds_sum{endpoint="UNKNOWN",method="GET",status="400"}
 */
 #![deny(missing_docs)]
 
-use log::debug;
+use log::warn;
 use std::collections::{HashMap, HashSet};
 use std::future::{ready, Future, Ready};
 use std::marker::PhantomData;
@@ -807,7 +807,7 @@ where
                 if let Ok(mixed_cardinality_pattern) = strfmt(&normalized_pattern, &params) {
                     mixed_cardinality_pattern
                 } else {
-                    debug!(
+                    warn!(
                         "Cannot build mixed cardinality pattern {full_pattern}, with params {params:?}"
                     );
                     full_pattern
