@@ -969,6 +969,18 @@ mod tests {
 
     use prometheus::{Counter, Opts};
 
+    #[test]
+    fn normalize_pattern_strips_constraints() {
+        // These assertions exercise the static regex inside normalize_pattern.
+        // If the regex is ever changed to an invalid pattern, normalization
+        // silently degrades and the output will no longer match, catching the
+        // regression in CI before it ships.
+        assert_eq!(normalize_pattern("/api/{tail:.*}"), "/api/{tail}");
+        assert_eq!(normalize_pattern("/users/{id:[0-9]+}"), "/users/{id}");
+        assert_eq!(normalize_pattern("/plain/{name}"), "/plain/{name}");
+        assert_eq!(normalize_pattern("/no/params"), "/no/params");
+    }
+
     #[actix_web::test]
     async fn middleware_basic() {
         let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
