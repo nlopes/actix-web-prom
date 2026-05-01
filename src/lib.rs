@@ -311,7 +311,7 @@ http_requests_duration_seconds_sum{endpoint="UNKNOWN",method="GET",status="400"}
 */
 #![deny(missing_docs)]
 
-use log::warn;
+use log::{error, warn};
 use std::collections::{HashMap, HashSet};
 use std::future::{Future, Ready, ready};
 use std::marker::PhantomData;
@@ -642,23 +642,19 @@ pub struct PrometheusMetrics {
 }
 
 impl PrometheusMetrics {
-    fn metrics(&self) -> String {
+    fn metrics(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let mut buffer = vec![];
-        TextEncoder::new()
-            .encode(&self.registry.gather(), &mut buffer)
-            .unwrap();
+        TextEncoder::new().encode(&self.registry.gather(), &mut buffer)?;
 
         #[cfg(feature = "process")]
         {
             let mut process_metrics = vec![];
-            TextEncoder::new()
-                .encode(&prometheus::gather(), &mut process_metrics)
-                .unwrap();
+            TextEncoder::new().encode(&prometheus::gather(), &mut process_metrics)?;
 
             buffer.extend_from_slice(&process_metrics);
         }
 
-        String::from_utf8(buffer).unwrap()
+        Ok(String::from_utf8(buffer)?)
     }
 
     fn matches(&self, path: &str, method: &Method) -> bool {
@@ -834,14 +830,28 @@ where
             // an endpoint to serve middleware results. The user is only required to set
             // the middleware and tell us what the endpoint should be.
             if inner.matches(&path, &method) {
-                head.status = StatusCode::OK;
-                head.headers.insert(
-                    CONTENT_TYPE,
-                    HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
-                );
+                let metrics_body = match inner.metrics() {
+                    Ok(body) => {
+                        head.status = StatusCode::OK;
+                        head.headers.insert(
+                            CONTENT_TYPE,
+                            HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+                        );
+                        body
+                    }
+                    Err(e) => {
+                        error!("Failed to encode metrics: {e}");
+                        head.status = StatusCode::INTERNAL_SERVER_ERROR;
+                        head.headers.insert(
+                            CONTENT_TYPE,
+                            HeaderValue::from_static("text/plain; charset=utf-8"),
+                        );
+                        String::new()
+                    }
+                };
 
                 EitherBody::right(StreamLog {
-                    body: inner.metrics(),
+                    body: metrics_body,
                     size: 0,
                     clock: time,
                     inner,
@@ -1658,5 +1668,56 @@ actix_web_prom_http_requests_total{endpoint=\"/health_check\",method=\"GET\",sta
         assert!(!&body.contains("endpoint=\"/ping\""));
         assert!(!&body.contains("endpoint=\"/readyz"));
         assert!(!body.contains("endpoint=\"/notfound"));
+    }
+
+    #[actix_web::test]
+    async fn middleware_metrics_encoding_failure_returns_500() {
+        // A custom Collector that returns a nameless MetricFamily, which causes
+        // TextEncoder::encode to fail via check_metric_family. This exercises
+        // the error path in metrics() to verify we return 500 rather than panic.
+        struct BrokenCollector;
+
+        impl prometheus::core::Collector for BrokenCollector {
+            fn desc(&self) -> Vec<&prometheus::core::Desc> {
+                vec![]
+            }
+
+            fn collect(&self) -> Vec<prometheus::proto::MetricFamily> {
+                // A MetricFamily with no name triggers check_metric_family to fail
+                let mut mf = prometheus::proto::MetricFamily::default();
+                let mut metric = prometheus::proto::Metric::default();
+                metric.set_gauge(prometheus::proto::Gauge::default());
+                mf.set_metric(vec![metric]);
+                // Intentionally omit setting the name so it remains empty
+                vec![mf]
+            }
+        }
+
+        let registry = Registry::new();
+        registry.register(Box::new(BrokenCollector)).unwrap();
+
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .registry(registry)
+            .endpoint("/metrics")
+            .build()
+            .unwrap();
+
+        let app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/test").to(|| async { HttpResponse::Ok().finish() })),
+        )
+        .await;
+
+        let res = call_service(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        assert_eq!(
+            res.status(),
+            actix_web::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            res.headers().get(CONTENT_TYPE).unwrap(),
+            "text/plain; charset=utf-8"
+        );
+        assert!(read_body(res).await.is_empty());
     }
 }
