@@ -336,8 +336,19 @@ use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry, TextEncoder,
 };
 
-use regex::RegexSet;
+use regex::{Regex, RegexSet};
 use strfmt::strfmt;
+
+// Lazily initialized regex to strip regex constraints from path patterns
+// e.g., {tail:.*} -> {tail}, {id:[0-9]+} -> {id}
+fn normalize_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
+    static CONSTRAINT_RE: std::sync::LazyLock<Option<Regex>> =
+        std::sync::LazyLock::new(|| Regex::new(r"\{(\w+):[^}]+\}").ok());
+    match CONSTRAINT_RE.as_ref() {
+        Some(re) => re.replace_all(pattern, "{$1}"),
+        None => std::borrow::Cow::Borrowed(pattern),
+    }
+}
 
 /// `MetricsConfig` define middleware and config struct to change the behaviour of the metrics
 /// struct to define some particularities
@@ -811,7 +822,9 @@ where
                     params.insert(key.to_string(), format!("{{{key}}}"));
                 }
 
-                if let Ok(mixed_cardinality_pattern) = strfmt(&full_pattern, &params) {
+                let normalized_pattern = normalize_pattern(&full_pattern);
+
+                if let Ok(mixed_cardinality_pattern) = strfmt(&normalized_pattern, &params) {
                     mixed_cardinality_pattern
                 } else {
                     warn!(
@@ -965,6 +978,18 @@ mod tests {
     use actix_web::{App, HttpMessage, HttpResponse, Resource, Scope, web};
 
     use prometheus::{Counter, Opts};
+
+    #[test]
+    fn normalize_pattern_strips_constraints() {
+        // These assertions exercise the static regex inside normalize_pattern.
+        // If the regex is ever changed to an invalid pattern, normalization
+        // silently degrades and the output will no longer match, catching the
+        // regression in CI before it ships.
+        assert_eq!(normalize_pattern("/api/{tail:.*}"), "/api/{tail}");
+        assert_eq!(normalize_pattern("/users/{id:[0-9]+}"), "/users/{id}");
+        assert_eq!(normalize_pattern("/plain/{name}"), "/plain/{name}");
+        assert_eq!(normalize_pattern("/no/params"), "/no/params");
+    }
 
     #[actix_web::test]
     async fn middleware_basic() {
