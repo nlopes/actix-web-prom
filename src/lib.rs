@@ -797,7 +797,8 @@ where
         let req = res.request();
         let method = req.method().clone();
         let version = req.version();
-        let was_path_matched = req.match_pattern().is_some();
+        let full_pattern = req.match_pattern();
+        let was_path_matched = full_pattern.is_some();
 
         // get metrics config for this specific route
         // piece of code to allow for more cardinality
@@ -806,13 +807,18 @@ where
             None => vec![],
         };
 
-        let full_pattern = req.match_pattern();
         let path = req.path().to_string();
         let fallback_pattern = full_pattern.clone().unwrap_or(path.clone());
 
         // mixed_pattern is the final path used as label value in metrics
         let mixed_pattern = match full_pattern {
             None => path.clone(),
+            // Every parameter keeps its placeholder, so the pattern is the label as it is.
+            Some(full_pattern)
+                if params_keep_path_cardinality.is_empty() && !has_nested_braces(&full_pattern) =>
+            {
+                this.inner.normalize_pattern(&full_pattern).into_owned()
+            }
             Some(full_pattern) => {
                 let mut params: HashMap<String, String> = HashMap::new();
 
@@ -893,6 +899,20 @@ where
             }
         })))
     }
+}
+
+/// Returns true if a `{...}` segment of `pattern` has braces of its own, as in `{id:[0-9]{3}}`.
+/// `normalize_pattern` leaves a stray `}` after such a segment, which `strfmt` rejects.
+fn has_nested_braces(pattern: &str) -> bool {
+    let mut depth = 0;
+    pattern.bytes().any(|byte| {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            _ => {}
+        }
+        depth > 1
+    })
 }
 
 #[doc(hidden)]
@@ -1201,6 +1221,56 @@ actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",st
                 .unwrap()
             )
         );
+    }
+
+    #[actix_web::test]
+    async fn middleware_match_pattern_with_constraint() {
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .endpoint("/metrics")
+            .build()
+            .unwrap();
+
+        let app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/resource/{id:[0-9]+}").to(HttpResponse::Ok)),
+        )
+        .await;
+
+        let res = call_service(&app, TestRequest::with_uri("/resource/123").to_request()).await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(res.to_vec()).unwrap();
+        assert!(body.contains(
+            "actix_web_prom_http_requests_total{endpoint=\"/resource/{id}\",method=\"GET\",status=\"200\"} 1"
+        ));
+    }
+
+    #[actix_web::test]
+    async fn middleware_match_pattern_with_nested_braces() {
+        let prometheus = PrometheusMetricsBuilder::new("actix_web_prom")
+            .endpoint("/metrics")
+            .build()
+            .unwrap();
+
+        let app = init_service(
+            App::new()
+                .wrap(prometheus)
+                .service(web::resource("/resource/{id:[0-9]{3}}").to(HttpResponse::Ok)),
+        )
+        .await;
+
+        let res = call_service(&app, TestRequest::with_uri("/resource/123").to_request()).await;
+        assert!(res.status().is_success());
+        assert_eq!(read_body(res).await, "");
+
+        let res = call_and_read_body(&app, TestRequest::with_uri("/metrics").to_request()).await;
+        let body = String::from_utf8(res.to_vec()).unwrap();
+        assert!(body.contains(
+            "actix_web_prom_http_requests_total{endpoint=\"/resource/{id:[0-9]{3}}\",method=\"GET\",status=\"200\"} 1"
+        ));
     }
 
     #[actix_web::test]
